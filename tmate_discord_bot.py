@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-TOKEN = os.getenv("DISCORD_TOKEN")
+TOKEN = os.getenv("TOKEN")
 OWNER_ID = int(os.getenv("OWNER_ID"))  # Your Discord ID
 ALLOWED_CHANNEL_ID = int(os.getenv("ALLOWED_CHANNEL_ID"))  # The channel ID allowed to use /deploy
 
