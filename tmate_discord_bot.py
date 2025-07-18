@@ -7,14 +7,16 @@ import json
 import os
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
+
 intents = discord.Intents.default()
 bot = commands.Bot(command_prefix="!", intents=intents)
 tree = bot.tree
 
-# Khai báo trực tiếp không cần .env
+# Moẹ
+load_dotenv()
 TOKEN = os.getenv("TOKEN")
-OWNER_ID = 
-ALLOWED_CHANNEL_ID = 
+OWNER_ID = 882844895902040104
+ALLOWED_CHANNEL_ID = 1378918272812060742
 
 DB_FILE = "db.json"
 CREDIT_PER_DEPLOY = 10
