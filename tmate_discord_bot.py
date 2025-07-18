@@ -1,30 +1,30 @@
 import discord
-from discord.ext import commands
+from discord.ext import commands, tasks
 from discord import app_commands
 import asyncio
 import os
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
 
-# Load ENV
+# Load .env
 load_dotenv()
 TOKEN = os.getenv("TOKEN")
 OWNER_ID = int(os.getenv("OWNER_ID"))
 ALLOWED_CHANNEL_ID = int(os.getenv("ALLOWED_CHANNEL_ID"))
 
-# Bot setup
+# Khởi tạo bot
 intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 tree = bot.tree
 
-# Data storage
+# Biến toàn cục
 sessions = {}
 user_credits = {}
 last_credit_claim = {}
 CREDIT_COST_PER_DAY = 10
 
-# Format duration helper
+# Format thời gian
 def format_duration(seconds):
     minutes, seconds = divmod(int(seconds), 60)
     hours, minutes = divmod(minutes, 60)
@@ -35,6 +35,14 @@ def format_duration(seconds):
 def is_owner(user: discord.User) -> bool:
     return user.id == OWNER_ID
 
+# Cập nhật status bot
+@tasks.loop(seconds=30)
+async def update_bot_status():
+    count = len(sessions)
+    activity = discord.Activity(type=discord.ActivityType.watching, name=f"{count} VPS")
+    await bot.change_presence(status=discord.Status.online, activity=activity)
+
+# Khi bot sẵn sàng
 @bot.event
 async def on_ready():
     print(f"Bot connected as {bot.user}")
@@ -43,8 +51,9 @@ async def on_ready():
         print(f"Synced {len(synced)} command(s)")
     except Exception as e:
         print(f"Sync error: {e}")
+    update_bot_status.start()
 
-# /deploy command
+# Lệnh /deploy
 @tree.command(name="deploy", description="Tạo VPS tạm thời bằng tmate")
 async def deploy(interaction: discord.Interaction):
     user = interaction.user
@@ -62,6 +71,7 @@ async def deploy(interaction: discord.Interaction):
         return
 
     await interaction.response.defer(ephemeral=True)
+
     try:
         await asyncio.create_subprocess_exec("tmate", "-F", stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
         await asyncio.sleep(5)
@@ -79,7 +89,6 @@ async def deploy(interaction: discord.Interaction):
             await interaction.followup.send("❌ Không tìm thấy SSH. Hãy thử lại sau.", ephemeral=True)
             return
 
-        # Lưu session
         sessions[user.id] = {
             "ssh": ssh_line,
             "start_time": datetime.utcnow(),
@@ -93,7 +102,6 @@ async def deploy(interaction: discord.Interaction):
         except:
             await interaction.followup.send("✅ VPS đã tạo, nhưng tôi không thể gửi DM. Vui lòng mở tin nhắn riêng.", ephemeral=True)
 
-        # Notify hết hạn sau 24h
         async def notify_expiration():
             await asyncio.sleep(86400)
             if user.id in sessions:
@@ -108,7 +116,7 @@ async def deploy(interaction: discord.Interaction):
     except Exception as e:
         await interaction.followup.send(f"❌ Lỗi khi tạo VPS: {str(e)}", ephemeral=True)
 
-# /stop VPS
+# Lệnh /stop
 @tree.command(name="stop", description="Xoá VPS tạm thời hiện tại của bạn")
 async def stop(interaction: discord.Interaction):
     user = interaction.user
@@ -118,7 +126,7 @@ async def stop(interaction: discord.Interaction):
     else:
         await interaction.response.send_message("⚠️ Bạn không có VPS nào đang chạy.", ephemeral=True)
 
-# /list các user có VPS
+# Lệnh /list
 @tree.command(name="list", description="Xem các ID người dùng đang có VPS")
 async def list_sessions(interaction: discord.Interaction):
     if not sessions:
@@ -128,7 +136,7 @@ async def list_sessions(interaction: discord.Interaction):
     ids = "\n".join(str(uid) for uid in sessions.keys())
     await interaction.response.send_message(f"🧾 Danh sách user ID có VPS:\n```\n{ids}\n```", ephemeral=True)
 
-# /timevps - kiểm tra thời gian còn lại
+# Lệnh /timevps
 @tree.command(name="timevps", description="Xem thời gian còn lại của VPS")
 async def timevps(interaction: discord.Interaction):
     user_id = interaction.user.id
@@ -147,7 +155,7 @@ async def timevps(interaction: discord.Interaction):
     else:
         await interaction.response.send_message(f"⏰ Thời gian còn lại: **{format_duration(remaining.total_seconds())}**", ephemeral=True)
 
-# /getcredit
+# Lệnh /getcredit
 @tree.command(name="getcredit", description="Nhận 1 credit mỗi 12 giờ.")
 async def get_credit(interaction: discord.Interaction):
     user_id = interaction.user.id
@@ -169,7 +177,7 @@ async def get_credit(interaction: discord.Interaction):
     last_credit_claim[user_id] = now
     await interaction.response.send_message("✅ Bạn đã nhận được 1 credit!", ephemeral=True)
 
-# /givecredit chỉ owner
+# Lệnh /givecredit
 @tree.command(name="givecredit", description="(Chỉ Owner) Cộng credit cho người dùng.")
 @app_commands.describe(user="Người nhận", amount="Số credit")
 async def give_credit(interaction: discord.Interaction, user: discord.User, amount: int):
@@ -180,7 +188,7 @@ async def give_credit(interaction: discord.Interaction, user: discord.User, amou
     user_credits[user.id] = user_credits.get(user.id, 0) + amount
     await interaction.response.send_message(f"✅ Đã cộng {amount} credit cho {user.mention}", ephemeral=True)
 
-# /xoacredit
+# Lệnh /xoacredit
 @tree.command(name="xoacredit", description="(Chỉ Owner) Xoá toàn bộ credit của người dùng.")
 @app_commands.describe(user="Người bị xoá credit")
 async def xoacredit(interaction: discord.Interaction, user: discord.User):
@@ -191,5 +199,5 @@ async def xoacredit(interaction: discord.Interaction, user: discord.User):
     user_credits[user.id] = 0
     await interaction.response.send_message(f"🗑️ Đã xoá toàn bộ credit của {user.mention}", ephemeral=True)
 
-# Run bot
+# Chạy bot
 bot.run(TOKEN)
