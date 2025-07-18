@@ -268,4 +268,4 @@ async def check_vps_expiry():
         save_json(SESSION_FILE, tmate_sessions)
 
 
-bot.run("YOUR_TOKEN_HERE")
+bot.run(TOKEN)
