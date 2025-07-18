@@ -7,8 +7,9 @@ import json
 import random
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
+from typing import Literal
 
-#TOKEN
+# TOKEN
 load_dotenv()
 TOKEN = os.getenv("TOKEN")
 OWNER_ID = 882844895902040104
@@ -33,6 +34,7 @@ def save_db(db):
 @bot.event
 async def on_ready():
     check_vps_expiry.start()
+    await tree.sync()
     print(f"Bot online: {bot.user}")
 
 def is_owner(interaction):
@@ -47,8 +49,7 @@ async def credit(interaction: discord.Interaction):
         return
     uid = str(interaction.user.id)
     db = load_db()
-    user = db.get(uid, {})
-    coin = user.get("credit", 0)
+    coin = db.get(uid, {}).get("credit", 0)
     await interaction.response.send_message(f"Mày còn {coin} coin, nghèo rớt mồng tơi.")
 
 @tree.command(name="getcredit", description="Xin thêm 1 coin (12h 1 lần)")
@@ -93,7 +94,7 @@ async def xoacredit(interaction: discord.Interaction, user: discord.User, amount
 
 @tree.command(name="shopping", description="Mua cấu hình VPS")
 @app_commands.describe(option="Chọn cấu hình muốn mua")
-async def shopping(interaction: discord.Interaction, option: str):
+async def shopping(interaction: discord.Interaction, option: Literal["2core_2gb", "4core_4gb", "8core_8gb", "12core_12gb", "16core_16gb"]):
     if not allowed_channel(interaction):
         return
     uid = str(interaction.user.id)
@@ -104,9 +105,6 @@ async def shopping(interaction: discord.Interaction, option: str):
         "12core_12gb": 120,
         "16core_16gb": 160
     }
-
-    if option not in options:
-        return await interaction.response.send_message("Chọn 1 trong: 2core_2gb, 4core_4gb, 8core_8gb, 12core_12gb, 16core_16gb", ephemeral=True)
 
     db = load_db()
     user = db.setdefault(uid, {})
@@ -124,7 +122,7 @@ async def shopping(interaction: discord.Interaction, option: str):
 
 @tree.command(name="setcauhinh", description="Chọn cấu hình đã mua để deploy")
 @app_commands.describe(option="Cấu hình muốn set")
-async def setcauhinh(interaction: discord.Interaction, option: str):
+async def setcauhinh(interaction: discord.Interaction, option: Literal["2core_2gb", "4core_4gb", "8core_8gb", "12core_12gb", "16core_16gb"]):
     if not allowed_channel(interaction):
         return
     uid = str(interaction.user.id)
