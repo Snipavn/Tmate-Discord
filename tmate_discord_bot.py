@@ -81,9 +81,7 @@ async def deploy(interaction: discord.Interaction):
         user_credits[user.id] -= CREDIT_COST_PER_DAY
 
         try:
-            await user.send(f"🔐 VPS của bạn đã sẵn sàng:
-```{ssh_line}```
-Dùng `/timevps` để xem thời gian còn lại.")
+            await user.send(f"🔐 VPS của bạn đã sẵn sàng:\n```{ssh_line}```\nDùng `/timevps` để xem thời gian còn lại.")
             await interaction.followup.send("✅ VPS đã được tạo. Kiểm tra tin nhắn riêng để lấy SSH.", ephemeral=True)
         except:
             await interaction.followup.send("✅ VPS đã tạo, nhưng tôi không thể gửi DM. Vui lòng mở tin nhắn riêng.", ephemeral=True)
