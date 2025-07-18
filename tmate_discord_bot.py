@@ -9,8 +9,8 @@ from dotenv import load_dotenv
 # Load .env
 load_dotenv()
 TOKEN = os.getenv("TOKEN")
-OWNER_ID = int(os.getenv("OWNER_ID"))
-ALLOWED_CHANNEL_ID = int(os.getenv("ALLOWED_CHANNEL_ID"))
+OWNER_ID= 882844895902040104
+ALLOWED_CHANNEL_ID= 1378918272812060742
 
 # Khởi tạo bot
 intents = discord.Intents.default()
