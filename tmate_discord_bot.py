@@ -3,6 +3,7 @@ from discord.ext import commands, tasks
 from discord import app_commands
 import json
 import time
+import os
 import asyncio
 import random
 import string
