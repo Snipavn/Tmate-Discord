@@ -9,7 +9,7 @@ TOKEN = os.getenv("TOKEN")
 
 OWNER_ID = 882844895902040104  # thay bằng ID của bạn
 ALLOWED_CHANNEL_ID = 1378918272812060742  # thay bằng ID kênh
-ALLOWED_ROLE_ID = 123456789012345678  # thay bằng ID role
+ALLOWED_ROLE_ID = 997017581766574234  # thay bằng ID role
 
 intents = discord.Intents.default()
 intents.message_content = True
