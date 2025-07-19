@@ -1,257 +1,193 @@
 import discord
 from discord.ext import commands
 from discord import app_commands
-import asyncio, os, json, random, datetime
-import subprocess
+import subprocess, os, json, asyncio, random
 from dotenv import load_dotenv
-
-
 intents = discord.Intents.default()
-intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 tree = bot.tree
-# con cak
+
 load_dotenv()
-TOKEN = os.getenv("TOKEN")
-OWNER_ID = 882844895902040104
-ALLOWED_CHANNEL_ID = 1378918272812060742
-UBUNTU_URL = "https://raw.githubusercontent.com/proot-me/proot/master/test/ubuntu-rootfs.tar.gz"
-ROOTFS_LOCAL = "ubuntu-rootfs.tar.gz"
-
+TOKEN= os.getenv("TOKEN")
+OWNER_ID = 882844895902040104  # Thay ID owner
+ALLOWED_CHANNEL_ID = 1378918272812060742  # Thay channel cho phép
 DB_PATH = "db.json"
+ROOTFS_URL = "https://partner-images.canonical.com/core/jammy/current/ubuntu-jammy-core-cloudimg-amd64-root.tar.gz"
+ROOTFS_FILE = "ubuntu22.04-rootfs.tar.gz"
 
+# ===== Database =====
 def load_db():
     if not os.path.exists(DB_PATH):
-        with open(DB_PATH, "w") as f:
-            json.dump({"credits": {}, "configs": {}, "selected_configs": {}, "expiry_times": {}}, f)
-    with open(DB_PATH) as f:
-        return json.load(f)
+        with open(DB_PATH, "w") as f: json.dump({"users": {}, "sessions": {}, "credits": {}, "configs": {}}, f, indent=4)
+    with open(DB_PATH) as f: return json.load(f)
 
 def save_db(data):
-    with open(DB_PATH, "w") as f:
-        json.dump(data, f, indent=2)
+    with open(DB_PATH, "w") as f: json.dump(data, f, indent=4)
 
-def ensure_user(db, user_id):
-    uid = str(user_id)
-    if uid not in db["credits"]:
-        db["credits"][uid] = 0
-    if uid not in db["configs"]:
-        db["configs"][uid] = []
-    if uid not in db["selected_configs"]:
-        db["selected_configs"][uid] = None
+db = load_db()
 
-async def ensure_rootfs():
-    if not os.path.exists(ROOTFS_LOCAL):
-        subprocess.run(["wget", "-O", ROOTFS_LOCAL, UBUNTU_URL])
+# ===== Util =====
+def ensure_rootfs():
+    if not os.path.exists(ROOTFS_FILE):
+        subprocess.run(["wget", "-O", ROOTFS_FILE, ROOTFS_URL])
 
-def build_proot_command(session_path):
-    return (
-        f"proot -S {session_path}/ubuntu /usr/bin/env -i HOME=/root "
-        f"PATH=/bin:/usr/bin:/sbin:/usr/sbin tmate -S {session_path}/tmate.sock new-session -d && "
-        f"tmate -S {session_path}/tmate.sock wait tmate-ready && "
-        f"tmate -S {session_path}/tmate.sock display -p '#{{tmate_ssh}}'"
-    )
+def get_user_folder(uid):
+    folder = f"sessions/{uid}"
+    os.makedirs(folder, exist_ok=True)
+    return folder
 
-@tree.command(name="deploy", description="Triệu hồi VPS (mất 10 credit/ngày)")
+def has_session(uid):
+    return str(uid) in db["sessions"]
+
+def check_credit(uid, required):
+    return db["credits"].get(str(uid), 0) >= required
+
+def add_credit(uid, amount):
+    uid = str(uid)
+    db["credits"][uid] = db["credits"].get(uid, 0) + amount
+    save_db(db)
+
+# ===== Commands =====
+@tree.command(name="deploy", description="Tạo VPS (tốn 10 credit/ngày)")
 async def deploy(interaction: discord.Interaction):
     await interaction.response.defer()
-    db = load_db()
-    user_id = str(interaction.user.id)
+    uid = str(interaction.user.id)
 
     if interaction.channel.id != ALLOWED_CHANNEL_ID:
-        return await interaction.followup.send("Cút về đúng kênh!", ephemeral=True)
+        return await interaction.followup.send("Cút về channel chính làm đi thg ngu!", ephemeral=True)
 
-    ensure_user(db, user_id)
-    if db["credits"][user_id] < 10:
-        return await interaction.followup.send("Mày nghèo quá, không đủ credit!", ephemeral=True)
+    if not db["configs"].get(uid):
+        return await interaction.followup.send("Mày chưa set cấu hình. Dùng /setcauhinh trước đã!", ephemeral=True)
 
-    config = db["selected_configs"].get(user_id)
-    if not config:
-        return await interaction.followup.send("Chưa chọn cấu hình! Dùng lệnh /setcauhinh trước.", ephemeral=True)
+    if not check_credit(uid, 10):
+        return await interaction.followup.send("Mày nghèo bỏ mẹ, thiếu credit!", ephemeral=True)
 
-    db["credits"][user_id] -= 10
-    expiry = datetime.datetime.utcnow() + datetime.timedelta(days=1)
-    db["expiry_times"][user_id] = expiry.isoformat()
+    ensure_rootfs()
+    folder = get_user_folder(uid)
+    os.makedirs(f"{folder}/ubuntu", exist_ok=True)
+    subprocess.run(f"tar -xf {ROOTFS_FILE} -C {folder}/ubuntu", shell=True)
+
+    sock_path = f"{folder}/tmate.sock"
+    subprocess.Popen(
+        f"tmate -S {sock_path} new-session -d && "
+        f"tmate -S {sock_path} wait tmate-ready && "
+        f"tmate -S {sock_path} display -p '#{{tmate_ssh}}' > {folder}/ssh.txt",
+        shell=True
+    )
+    db["sessions"][uid] = {"folder": folder}
+    add_credit(uid, -10)
     save_db(db)
 
-    session_path = f"sessions/{user_id}"
-    os.makedirs(f"{session_path}/ubuntu", exist_ok=True)
-    await ensure_rootfs()
-    subprocess.run(["tar", "-xzf", ROOTFS_LOCAL, "-C", f"{session_path}/ubuntu", "--strip-components=1"])
+    await asyncio.sleep(5)
+    with open(f"{folder}/ssh.txt") as f:
+        ssh = f.read().strip()
+    await interaction.user.send(f"🖥️ VPS của mày nè: `{ssh}`")
+    await interaction.followup.send("Tao gửi link ssh riêng cho mày rồi đó, đọc đi!", ephemeral=True)
 
-    command = build_proot_command(session_path)
-    try:
-        output = subprocess.check_output(command, shell=True, stderr=subprocess.STDOUT, timeout=30)
-        ssh_link = output.decode().strip()
-        await interaction.user.send(f"🔌 SSH VPS của mày nè: `{ssh_link}`\nTự động xoá sau 24h")
-        await interaction.followup.send("Đã gửi SSH link vào tin nhắn riêng!", ephemeral=True)
-    except subprocess.CalledProcessError as e:
-        await interaction.followup.send(f"Lỗi khi tạo VPS: {e.output.decode()}", ephemeral=True)
-
-@tree.command(name="stopvps", description="Xoá VPS")
+@tree.command(name="stopvps", description="Dừng VPS đang chạy")
 async def stopvps(interaction: discord.Interaction):
-    user_id = str(interaction.user.id)
-    session_path = f"sessions/{user_id}"
-    if os.path.exists(session_path):
-        subprocess.run(["rm", "-rf", session_path])
-        await interaction.response.send_message("Đã xoá VPS cho mày!", ephemeral=True)
-    else:
-        await interaction.response.send_message("Mày chưa có VPS để xoá!", ephemeral=True)
+    uid = str(interaction.user.id)
+    if not has_session(uid):
+        return await interaction.response.send_message("Mày có chạy gì đâu mà stop 😒", ephemeral=True)
+    folder = db["sessions"][uid]["folder"]
+    subprocess.run(f"rm -rf {folder}", shell=True)
+    del db["sessions"][uid]
+    save_db(db)
+    await interaction.response.send_message("Xoá VPS rồi, khỏi lo.", ephemeral=True)
 
-@tree.command(name="renew", description="Gia hạn VPS (10 credit/ngày)")
+@tree.command(name="renew", description="Gia hạn VPS (10 credit)")
 async def renew(interaction: discord.Interaction):
-    db = load_db()
-    user_id = str(interaction.user.id)
-    ensure_user(db, user_id)
-
-    if db["credits"][user_id] < 10:
-        return await interaction.response.send_message("Không đủ credit!", ephemeral=True)
-
-    db["credits"][user_id] -= 10
-    expiry = datetime.datetime.utcnow() + datetime.timedelta(days=1)
-    db["expiry_times"][user_id] = expiry.isoformat()
+    uid = str(interaction.user.id)
+    if not has_session(uid):
+        return await interaction.response.send_message("Chó ơi mày chưa có VPS mà đòi gia hạn?", ephemeral=True)
+    if not check_credit(uid, 10):
+        return await interaction.response.send_message("Nghèo thì đừng đú gia hạn 😏", ephemeral=True)
+    add_credit(uid, -10)
     save_db(db)
-    await interaction.response.send_message("Gia hạn VPS thành công!", ephemeral=True)
+    await interaction.response.send_message("Được rồi, tao gia hạn cho mày đó.", ephemeral=True)
 
-@tree.command(name="timevps", description="Xem thời gian còn lại của VPS")
-async def timevps(interaction: discord.Interaction):
-    db = load_db()
-    user_id = str(interaction.user.id)
-    expiry_str = db["expiry_times"].get(user_id)
+@tree.command(name="credit", description="Xem số credit")
+async def credit(interaction: discord.Interaction):
+    uid = str(interaction.user.id)
+    c = db["credits"].get(uid, 0)
+    await interaction.response.send_message(f"💰 Credit của mày: `{c}`", ephemeral=True)
 
-    if not expiry_str:
-        return await interaction.response.send_message("Mày chưa có VPS!", ephemeral=True)
-
-    expiry = datetime.datetime.fromisoformat(expiry_str)
-    remaining = expiry - datetime.datetime.utcnow()
-    if remaining.total_seconds() <= 0:
-        await interaction.response.send_message("VPS đã hết hạn!", ephemeral=True)
-    else:
-        await interaction.response.send_message(f"Còn lại: {str(remaining).split('.')[0]}", ephemeral=True)
-
-@tree.command(name="getcredit", description="Nhận credit mỗi 12 tiếng (1 credit)")
+@tree.command(name="getcredit", description="Nhận 1 credit (12h/lần)")
 async def getcredit(interaction: discord.Interaction):
-    db = load_db()
-    user_id = str(interaction.user.id)
-    ensure_user(db, user_id)
+    uid = str(interaction.user.id)
+    add_credit(uid, 1)
+    await interaction.response.send_message("Thôi cho mày 1 credit, biến!", ephemeral=True)
 
-    last = db.get("last_claim", {}).get(user_id)
-    now = datetime.datetime.utcnow()
-    if last:
-        delta = now - datetime.datetime.fromisoformat(last)
-        if delta.total_seconds() < 43200:
-            return await interaction.response.send_message("Chưa đủ 12 tiếng để xin credit nữa!", ephemeral=True)
-
-    db["credits"][user_id] += 1
-    if "last_claim" not in db:
-        db["last_claim"] = {}
-    db["last_claim"][user_id] = now.isoformat()
-    save_db(db)
-    await interaction.response.send_message("Cho mày 1 credit nè!", ephemeral=True)
-
-@tree.command(name="givecredit", description="(OWNER) Tặng credit cho thằng ngu nào đó")
-@app_commands.describe(user="Thằng muốn nhận", amount="Bao nhiêu credit")
+@tree.command(name="givecredit", description="Tặng credit (OWNER)", default_permissions=discord.Permissions(administrator=True))
+@app_commands.checks.has_permissions(administrator=True)
 async def givecredit(interaction: discord.Interaction, user: discord.User, amount: int):
     if interaction.user.id != OWNER_ID:
-        return await interaction.response.send_message("Cút!", ephemeral=True)
-    db = load_db()
-    ensure_user(db, user.id)
-    db["credits"][str(user.id)] += amount
-    save_db(db)
-    await interaction.response.send_message(f"Đã tặng {amount} credit cho {user.name}!", ephemeral=True)
+        return await interaction.response.send_message("Câm mồm thằng lạ mặt!", ephemeral=True)
+    add_credit(user.id, amount)
+    await interaction.response.send_message(f"Cho {user.name} {amount} credit rồi!", ephemeral=True)
 
-@tree.command(name="xoacredit", description="(OWNER) Reset credit về 0")
-@app_commands.describe(user="Thằng cần bị nghèo lại")
+@tree.command(name="xoacredit", description="Xoá sạch credit (OWNER)")
 async def xoacredit(interaction: discord.Interaction, user: discord.User):
     if interaction.user.id != OWNER_ID:
-        return await interaction.response.send_message("Mày méo phải owner!", ephemeral=True)
-    db = load_db()
-    ensure_user(db, user.id)
+        return await interaction.response.send_message("Mày không phải chủ, xéo!", ephemeral=True)
     db["credits"][str(user.id)] = 0
     save_db(db)
-    await interaction.response.send_message(f"Đã reset credit cho {user.name}", ephemeral=True)
+    await interaction.response.send_message(f"Xoá sạch credit của thg {user.name} rồi 😈", ephemeral=True)
 
-@tree.command(name="credit", description="Xem credit mày còn bao nhiêu")
-async def credit(interaction: discord.Interaction):
-    db = load_db()
-    ensure_user(db, interaction.user.id)
-    await interaction.response.send_message(f"💰 Mày có {db['credits'][str(interaction.user.id)]} credit!", ephemeral=True)
-
-@tree.command(name="cuoccredit", description="Cược 1 credit, hên thì x10")
+@tree.command(name="cuoccredit", description="Cược 1 credit, thắng thì được 10")
 async def cuoccredit(interaction: discord.Interaction):
-    db = load_db()
     uid = str(interaction.user.id)
-    ensure_user(db, uid)
-
-    if db["credits"][uid] < 1:
-        return await interaction.response.send_message("Không đủ credit cược nha mày!", ephemeral=True)
-
-    db["credits"][uid] -= 1
-    if random.randint(1, 10) == 1:
-        db["credits"][uid] += 10
-        save_db(db)
-        await interaction.response.send_message("🤑 Hên vãi! Mày nhân 10 credit!", ephemeral=True)
+    if not check_credit(uid, 1):
+        return await interaction.response.send_message("Mày còn méo có nổi 1 credit, đi xin đi thằng nghèo!", ephemeral=True)
+    result = random.choice([True, False, False])
+    if result:
+        add_credit(uid, 10)
+        await interaction.response.send_message("🤑 Mày ăn được 10 credit rồi đó, cược tiếp đi!", ephemeral=True)
     else:
-        save_db(db)
-        await interaction.response.send_message("😂 Thua sml, mất mẹ 1 credit rồi!", ephemeral=True)
+        add_credit(uid, -1)
+        await interaction.response.send_message("Thua sml mất 1 credit 😢", ephemeral=True)
 
 @tree.command(name="shopping", description="Mua cấu hình VPS")
 async def shopping(interaction: discord.Interaction):
-    db = load_db()
-    uid = str(interaction.user.id)
-    ensure_user(db, uid)
+    embed = discord.Embed(title="🏪 SHOP VPS", description="Chọn cấu hình mày muốn mua", color=0x00ff00)
+    embed.add_field(name="2GB RAM, 2 core", value="`20 credit`", inline=False)
+    embed.add_field(name="4GB RAM, 4 core", value="`40 credit`", inline=False)
+    embed.add_field(name="8GB RAM, 8 core", value="`80 credit`", inline=False)
 
     view = discord.ui.View()
-    options = [
-        ("2GB RAM, 2 Core - 20c", "2gb_2core", 20),
-        ("4GB RAM, 4 Core - 40c", "4gb_4core", 40),
-        ("8GB RAM, 8 Core - 80c", "8gb_8core", 80)
-    ]
-    for label, value, cost in options:
-        async def callback(inter, val=value, cost=cost):
-            if db["credits"][uid] < cost:
-                await inter.response.send_message("Mày không đủ credit!", ephemeral=True)
-                return
-            if val in db["configs"][uid]:
-                await inter.response.send_message("Cấu hình này mày mua rồi!", ephemeral=True)
-                return
-            db["credits"][uid] -= cost
-            db["configs"][uid].append(val)
+    for ram, cpu, cost in [(2,2,20), (4,4,40), (8,8,80)]:
+        async def callback(interaction2, r=ram, c=cpu, cost=cost):
+            uid = str(interaction.user.id)
+            if not check_credit(uid, cost):
+                return await interaction2.response.send_message("Không đủ credit, té!", ephemeral=True)
+            add_credit(uid, -cost)
+            db["configs"][uid] = {"ram": r, "cpu": c}
             save_db(db)
-            await inter.response.send_message(f"Đã mua {val}!", ephemeral=True)
-
-        btn = discord.ui.Button(label=label, style=discord.ButtonStyle.primary)
+            await interaction2.response.send_message(f"Đã mua cấu hình {r}GB/{c} core!", ephemeral=True)
+        btn = discord.ui.Button(label=f"{ram}GB/{cpu}core", style=discord.ButtonStyle.green)
         btn.callback = callback
         view.add_item(btn)
+    await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
-    await interaction.response.send_message("🛍️ Chọn cấu hình muốn mua:", view=view, ephemeral=True)
-
-@tree.command(name="setcauhinh", description="Chọn cấu hình VPS để deploy")
+@tree.command(name="setcauhinh", description="Chọn cấu hình đã mua")
 async def setcauhinh(interaction: discord.Interaction):
-    db = load_db()
     uid = str(interaction.user.id)
-    ensure_user(db, uid)
-    configs = db["configs"][uid]
+    config = db["configs"].get(uid)
+    if not config:
+        return await interaction.response.send_message("Mày chưa mua cái gì cả 🤡", ephemeral=True)
+    await interaction.response.send_message(f"Đã set cấu hình {config['ram']}GB/{config['cpu']} core", ephemeral=True)
 
-    if not configs:
-        return await interaction.response.send_message("Mày chưa mua cấu hình nào!", ephemeral=True)
+@tree.command(name="timevps", description="Xem thời gian còn lại VPS")
+async def timevps(interaction: discord.Interaction):
+    if not has_session(str(interaction.user.id)):
+        return await interaction.response.send_message("Mày có VPS đâu mà đòi xem?", ephemeral=True)
+    await interaction.response.send_message("Mày còn ~24h tính từ lúc deploy. Đừng hỏi nữa!", ephemeral=True)
 
-    view = discord.ui.View()
-    for cfg in configs:
-        async def callback(inter, val=cfg):
-            db["selected_configs"][uid] = val
-            save_db(db)
-            await inter.response.send_message(f"Đã chọn {val}!", ephemeral=True)
-
-        btn = discord.ui.Button(label=f"Chọn {cfg}", style=discord.ButtonStyle.success)
-        btn.callback = callback
-        view.add_item(btn)
-
-    await interaction.response.send_message("🔧 Chọn cấu hình VPS để dùng:", view=view, ephemeral=True)
-
+# ===== On Ready =====
 @bot.event
 async def on_ready():
     await tree.sync()
-    print(f"Bot {bot.user} đã online!")
+    print(f"Bot đã online dưới tên: {bot.user}")
 
+# ===== Start =====
 bot.run(TOKEN)
