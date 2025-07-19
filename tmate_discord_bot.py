@@ -19,8 +19,8 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 tree = bot.tree
 
 # Config
-OWNER_ID = 123456789012345678  # Thay bằng ID của bạn
-ALLOWED_CHANNEL_ID = 123456789012345678  # Thay bằng ID kênh bot được phép hoạt động
+OWNER_ID = 882844895902040104  # Thay bằng ID của bạn
+ALLOWED_CHANNEL_ID = 1378918272812060742  # Thay bằng ID kênh bot được phép hoạt động
 CREDIT_FILE = "credits.json"
 CONFIG_FILE = "user_configs.json"
 VPS_DIR = "vps"
