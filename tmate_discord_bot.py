@@ -1,240 +1,179 @@
 import discord
 from discord.ext import commands, tasks
 from discord import app_commands
-import subprocess
-import os
-import asyncio
-import json
-import time
+import os, subprocess, asyncio, datetime, random, json
 from dotenv import load_dotenv
 
-# ====== CẤU HÌNH ======
 load_dotenv()
 TOKEN = os.getenv("TOKEN")
 
-OWNER_ID = 882844895902040104  # Thay bằng ID owner thật
-ALLOWED_CHANNEL_ID = 1378918272812060742  # Thay bằng ID kênh được dùng bot
+OWNER_ID = 882844895902040104  # thay bằng ID của bạn
+ALLOWED_CHANNEL_ID = 1378918272812060742  # chỉ cho chạy lệnh ở channel này
 
-CREDIT_FILE = "credits.json"
-VPS_DIR = "vps"
-CONFIG_FILE = "configs.json"
-UBUNTU_URL = "https://partner-images.canonical.com/core/jammy/current/ubuntu-jammy-core-cloudimg-amd64-root.tar.gz"
-
-if not os.path.exists(CREDIT_FILE):
-    with open(CREDIT_FILE, "w") as f:
-        json.dump({}, f)
-
-if not os.path.exists(CONFIG_FILE):
-    with open(CONFIG_FILE, "w") as f:
-        json.dump({}, f)
-
-if not os.path.exists(VPS_DIR):
-    os.makedirs(VPS_DIR)
-
-intents = discord.Intents.all()
+intents = discord.Intents.default()
 bot = commands.Bot(command_prefix="!", intents=intents)
 tree = bot.tree
 
-# ====== HÀM XỬ LÝ CREDIT ======
+data = {}
 
-def load_credits():
-    with open(CREDIT_FILE, "r") as f:
-        return json.load(f)
-
-def save_credits(data):
-    with open(CREDIT_FILE, "w") as f:
+def save_data():
+    with open("credit.json", "w") as f:
         json.dump(data, f)
 
-def get_credit(uid):
-    data = load_credits()
-    return data.get(str(uid), {}).get("credit", 0)
+def load_data():
+    global data
+    if os.path.exists("credit.json"):
+        with open("credit.json") as f:
+            data = json.load(f)
 
-def add_credit(uid, amount):
-    data = load_credits()
-    user = data.get(str(uid), {"credit": 0, "last_get": 0})
-    user["credit"] += amount
-    data[str(uid)] = user
-    save_credits(data)
+load_data()
 
-def set_credit(uid, amount):
-    data = load_credits()
-    user = data.get(str(uid), {"credit": 0, "last_get": 0})
-    user["credit"] = amount
-    data[str(uid)] = user
-    save_credits(data)
-
-# ====== HÀM VPS ======
-
-def user_vps_dir(uid):
-    return os.path.join(VPS_DIR, str(uid))
-
-def vps_running(uid):
-    return os.path.exists(os.path.join(user_vps_dir(uid), "tmate.sock"))
-
-def kill_vps(uid):
-    path = user_vps_dir(uid)
-    subprocess.call(f"pkill -f 'tmate -S {path}/tmate.sock'", shell=True)
-    subprocess.call(f"pkill -f 'proot -S {path}/ubuntu'", shell=True)
-
-def create_vps(uid):
-    path = user_vps_dir(uid)
-    os.makedirs(path, exist_ok=True)
-    ubuntu_tar = os.path.join(path, "ubuntu.tar.gz")
-    ubuntu_root = os.path.join(path, "ubuntu")
-
-    if not os.path.exists(ubuntu_tar):
-        subprocess.call(f"wget -O {ubuntu_tar} {UBUNTU_URL}", shell=True)
-    if not os.path.exists(ubuntu_root):
-        os.makedirs(ubuntu_root, exist_ok=True)
-        subprocess.call(f"proot --link2symlink -0 -r {ubuntu_root} -- tar -xf {ubuntu_tar} -C {ubuntu_root}", shell=True)
-
-    tmate_sock = os.path.join(path, "tmate.sock")
-    cmd = (
-        f"tmate -S {tmate_sock} new-session -d && "
-        f"tmate -S {tmate_sock} wait tmate-ready && "
-        f"tmate -S {tmate_sock} display -p '#{{tmate_ssh}}'"
-    )
-    ssh = subprocess.check_output(cmd, shell=True).decode().strip()
-    return ssh
-
-# ====== LỆNH ======
-
-@tree.command(name="deploy", description="Tạo VPS Ubuntu bằng proot")
-async def deploy(interaction: discord.Interaction):
-    if interaction.channel.id != ALLOWED_CHANNEL_ID:
-        await interaction.response.send_message("Cút về channel được phép xài bot, thằng ngu!", ephemeral=True)
-        return
-    uid = interaction.user.id
-    credit = get_credit(uid)
-    configs = json.load(open(CONFIG_FILE))
-    if str(uid) not in configs:
-        await interaction.response.send_message("Mày chưa /setcauhinh, làm ơn set trước khi xài /deploy!", ephemeral=True)
-        return
-    cost = configs[str(uid)]["cost"]
-    if credit < cost:
-        await interaction.response.send_message(f"Đù má mày thiếu credit, cần {cost}, mày có {credit} thôi!", ephemeral=True)
-        return
-    add_credit(uid, -cost)
-    ssh = create_vps(uid)
-    await interaction.response.send_message("Tao đang gửi SSH riêng cho mày qua DM!")
-    try:
-        await interaction.user.send(f"🎯 Đây là SSH của mày:\n`{ssh}`\nThời hạn VPS: 1 ngày")
-    except:
-        await interaction.followup.send("DM mày tắt rồi, không gửi được!", ephemeral=True)
-
-@tree.command(name="stopvps", description="Tắt VPS")
-async def stopvps(interaction: discord.Interaction):
-    uid = interaction.user.id
-    kill_vps(uid)
-    await interaction.response.send_message("VPS mày đã bị tao xử đẹp 😎", ephemeral=True)
-
-@tree.command(name="renew", description="Gia hạn VPS")
-async def renew(interaction: discord.Interaction):
-    uid = interaction.user.id
-    credit = get_credit(uid)
-    configs = json.load(open(CONFIG_FILE))
-    if str(uid) not in configs:
-        await interaction.response.send_message("Chưa có cấu hình để renew!", ephemeral=True)
-        return
-    cost = configs[str(uid)]["cost"]
-    if credit < cost:
-        await interaction.response.send_message(f"Không đủ credit để gia hạn! Mày có {credit}, cần {cost}", ephemeral=True)
-        return
-    add_credit(uid, -cost)
-    await interaction.response.send_message("Đã gia hạn VPS thêm 1 ngày, đừng để tao phải nói lần 2 😒", ephemeral=True)
-
-@tree.command(name="timevps", description="Xem thời gian còn lại của VPS")
-async def timevps(interaction: discord.Interaction):
-    await interaction.response.send_message("Chức năng này đang dev, đợi đi thằng hấp 😎", ephemeral=True)
-
-@tree.command(name="getcredit", description="Nhận credit mỗi 12h")
-async def getcredit(interaction: discord.Interaction):
-    uid = str(interaction.user.id)
-    data = load_credits()
-    now = time.time()
-    user = data.get(uid, {"credit": 0, "last_get": 0})
-    if now - user["last_get"] < 43200:
-        await interaction.response.send_message("Đợi 12h nữa hẵng xin credit nhé, đồ ăn hại 😡", ephemeral=True)
-        return
-    user["credit"] += 1
-    user["last_get"] = now
-    data[uid] = user
-    save_credits(data)
-    await interaction.response.send_message("Đã nhận 1 credit, nhớ dùng cho đàng hoàng 😏", ephemeral=True)
-
-@tree.command(name="credit", description="Xem credit hiện tại")
-async def credit(interaction: discord.Interaction):
-    uid = interaction.user.id
-    c = get_credit(uid)
-    await interaction.response.send_message(f"Mày đang có {c} credit, xài cho khôn!", ephemeral=True)
-
-@tree.command(name="givecredit", description="Admin tặng credit")
-@app_commands.describe(user="Người nhận", amount="Số credit")
-async def givecredit(interaction: discord.Interaction, user: discord.User, amount: int):
-    if interaction.user.id != OWNER_ID:
-        await interaction.response.send_message("Câm mõm, mày không có quyền!", ephemeral=True)
-        return
-    add_credit(user.id, amount)
-    await interaction.response.send_message(f"Đã cộng {amount} credit cho {user.mention}")
-
-@tree.command(name="xoacredit", description="Xoá toàn bộ credit user")
-@app_commands.describe(user="Người bị xoá")
-async def xoacredit(interaction: discord.Interaction, user: discord.User):
-    if interaction.user.id != OWNER_ID:
-        await interaction.response.send_message("Cút, lệnh này chỉ cho bố tao!", ephemeral=True)
-        return
-    set_credit(user.id, 0)
-    await interaction.response.send_message(f"Đã xoá sạch credit của {user.mention}")
-
-@tree.command(name="cuoccredit", description="Xem top người có credit")
-async def cuoccredit(interaction: discord.Interaction):
-    data = load_credits()
-    sorted_users = sorted(data.items(), key=lambda x: x[1]["credit"], reverse=True)
-    msg = "**💰 Top Credit:**\n"
-    for i, (uid, val) in enumerate(sorted_users[:10], 1):
-        user = await bot.fetch_user(int(uid))
-        msg += f"{i}. {user.name}: {val['credit']} credit\n"
-    await interaction.response.send_message(msg, ephemeral=True)
-
-@tree.command(name="shopping", description="Mua cấu hình VPS")
-@app_commands.describe(level="Chọn cấp cấu hình (2/4/8/12/16 GB RAM)")
-async def shopping(interaction: discord.Interaction, level: int):
-    uid = interaction.user.id
-    options = {
-        2: {"cost": 20, "ram": "2GB", "cpu": 2},
-        4: {"cost": 40, "ram": "4GB", "cpu": 4},
-        8: {"cost": 80, "ram": "8GB", "cpu": 8},
-        12: {"cost": 120, "ram": "12GB", "cpu": 12},
-        16: {"cost": 160, "ram": "16GB", "cpu": 16},
-    }
-    if level not in options:
-        await interaction.response.send_message("Chọn cấp RAM hợp lệ: 2, 4, 8, 12, 16!", ephemeral=True)
-        return
-    credit = get_credit(uid)
-    if credit < options[level]["cost"]:
-        await interaction.response.send_message("Credit mày không đủ để mua cấu hình này!", ephemeral=True)
-        return
-    add_credit(uid, -options[level]["cost"])
-    configs = json.load(open(CONFIG_FILE))
-    configs[str(uid)] = options[level]
-    with open(CONFIG_FILE, "w") as f:
-        json.dump(configs, f)
-    await interaction.response.send_message(f"Đã mua cấu hình {options[level]['ram']}, nhớ dùng /setcauhinh!", ephemeral=True)
-
-@tree.command(name="setcauhinh", description="Chọn cấu hình đã mua để dùng khi deploy")
-async def setcauhinh(interaction: discord.Interaction):
-    uid = interaction.user.id
-    configs = json.load(open(CONFIG_FILE))
-    if str(uid) not in configs:
-        await interaction.response.send_message("Mày chưa mua cấu hình nào cả, /shopping ngay đi thằng ngu!", ephemeral=True)
-        return
-    await interaction.response.send_message("Đã chọn cấu hình thành công, mày deploy được rồi đó!", ephemeral=True)
-
-# ====== KHỞI ĐỘNG ======
+def get_user(user_id):
+    uid = str(user_id)
+    if uid not in data:
+        data[uid] = {"credit": 0, "session": None, "expires": None}
+    return data[uid]
 
 @bot.event
 async def on_ready():
     await tree.sync()
-    print(f"Bot đang chạy với tên {bot.user}")
+    print(f"Bot đã online dưới tên {bot.user}")
 
+def is_owner(interaction):
+    return interaction.user.id == OWNER_ID
+
+def is_allowed_channel(interaction):
+    return interaction.channel.id == ALLOWED_CHANNEL_ID
+
+@tree.command(name="getcredit", description="Nhận 1 credit mỗi 12h")
+async def getcredit(interaction: discord.Interaction):
+    if not is_allowed_channel(interaction): return
+    uid = str(interaction.user.id)
+    user = get_user(uid)
+    now = datetime.datetime.utcnow()
+    last = user.get("last_credit")
+    if last and (now - datetime.datetime.fromisoformat(last)).total_seconds() < 43200:
+        await interaction.response.send_message("Mỗi 12 tiếng mới được xin thêm credit, đợi đi thằng ngu.")
+        return
+    user["credit"] += 1
+    user["last_credit"] = now.isoformat()
+    save_data()
+    await interaction.response.send_message(f"Đã cộng 1 credit cho thằng {interaction.user.name}")
+
+@tree.command(name="credit", description="Xem credit hiện tại")
+async def credit(interaction: discord.Interaction):
+    if not is_allowed_channel(interaction): return
+    user = get_user(interaction.user.id)
+    await interaction.response.send_message(f"Thằng {interaction.user.name} có {user['credit']} credit.")
+
+@tree.command(name="givecredit", description="Tặng credit cho người khác (OWNER)")
+@app_commands.describe(user="Người nhận", amount="Số credit")
+async def givecredit(interaction: discord.Interaction, user: discord.User, amount: int):
+    if not is_owner(interaction): return
+    target = get_user(user.id)
+    target["credit"] += amount
+    save_data()
+    await interaction.response.send_message(f"Đã cho {amount} credit thằng {user.name}")
+
+@tree.command(name="xoacredit", description="Xoá credit thằng khác (OWNER)")
+@app_commands.describe(user="Người bị xóa")
+async def xoacredit(interaction: discord.Interaction, user: discord.User):
+    if not is_owner(interaction): return
+    target = get_user(user.id)
+    target["credit"] = 0
+    save_data()
+    await interaction.response.send_message(f"Xoá sạch credit thằng {user.name} rồi.")
+
+@tree.command(name="deploy", description="Tạo VPS Ubuntu bằng proot")
+async def deploy(interaction: discord.Interaction):
+    if not is_allowed_channel(interaction): return
+    await interaction.response.defer()
+    user = get_user(interaction.user.id)
+    if user["credit"] < 10:
+        await interaction.followup.send("Mày nghèo quá, cần 10 credit mới deploy được.")
+        return
+    uid = str(interaction.user.id)
+    session_id = f"{uid}-{random.randint(1000,9999)}"
+    folder = f"/tmp/proot-{session_id}"
+    os.makedirs(folder, exist_ok=True)
+    rootfs = f"{folder}/ubuntu22.tar.gz"
+    if not os.path.exists(rootfs):
+        subprocess.run(f"curl -L https://raw.githubusercontent.com/ni28pro/ubuntu/main/ubuntu22.tar.gz -o {rootfs}", shell=True)
+        subprocess.run(f"cd {folder} && tar -xzf ubuntu22.tar.gz", shell=True)
+    script = f"""
+tmate -S {folder}/tmate.sock new-session -d &&
+tmate -S {folder}/tmate.sock wait tmate-ready &&
+tmate -S {folder}/tmate.sock display -p '#{{tmate_ssh}}'
+"""
+    result = subprocess.run(script, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    ssh = result.stdout.strip()
+    expires = datetime.datetime.utcnow() + datetime.timedelta(days=1)
+    user["credit"] -= 10
+    user["session"] = session_id
+    user["expires"] = expires.isoformat()
+    save_data()
+    try:
+        await interaction.user.send(f"Đây là SSH của mày: `{ssh}`\nSession ID: `{session_id}`\nHạn dùng: `{expires}`")
+    except:
+        await interaction.followup.send(f"Không gửi được DM cho mày, check lại setting Discord.")
+    await interaction.followup.send(f"Tao gửi SSH qua DM rồi, dùng lẹ lên!")
+
+@tree.command(name="stopvps", description="Dừng VPS của mày")
+async def stopvps(interaction: discord.Interaction):
+    if not is_allowed_channel(interaction): return
+    user = get_user(interaction.user.id)
+    if not user.get("session"):
+        await interaction.response.send_message("Mày chưa deploy cái gì cả.")
+        return
+    folder = f"/tmp/proot-{user['session']}"
+    subprocess.run(f"rm -rf {folder}", shell=True)
+    user["session"] = None
+    user["expires"] = None
+    save_data()
+    await interaction.response.send_message("Đã xoá mẹ VPS của mày rồi.")
+
+@tree.command(name="renew", description="Gia hạn VPS 1 ngày = 10 credit")
+async def renew(interaction: discord.Interaction):
+    if not is_allowed_channel(interaction): return
+    user = get_user(interaction.user.id)
+    if not user.get("session"):
+        await interaction.response.send_message("Mày có VPS đâu mà gia hạn con đần.")
+        return
+    if user["credit"] < 10:
+        await interaction.response.send_message("Không đủ 10 credit để gia hạn, kiếm thêm đi thg nghèo.")
+        return
+    expires = datetime.datetime.fromisoformat(user["expires"]) + datetime.timedelta(days=1)
+    user["credit"] -= 10
+    user["expires"] = expires.isoformat()
+    save_data()
+    await interaction.response.send_message(f"Đã gia hạn, dùng tới {expires} luôn đi.")
+
+@tree.command(name="timevps", description="Xem thời gian còn lại của VPS")
+async def timevps(interaction: discord.Interaction):
+    if not is_allowed_channel(interaction): return
+    user = get_user(interaction.user.id)
+    if not user.get("expires"):
+        await interaction.response.send_message("Mày chưa deploy cái gì cả.")
+        return
+    now = datetime.datetime.utcnow()
+    expire = datetime.datetime.fromisoformat(user["expires"])
+    remain = expire - now
+    if remain.total_seconds() <= 0:
+        await interaction.response.send_message("Hết hạn mẹ rồi, đi renew lẹ đi.")
+    else:
+        await interaction.response.send_message(f"VPS còn sống thêm {remain}.")
+
+@tasks.loop(minutes=5)
+async def auto_delete_expired():
+    for uid, info in data.items():
+        if info.get("expires"):
+            exp = datetime.datetime.fromisoformat(info["expires"])
+            if datetime.datetime.utcnow() > exp:
+                folder = f"/tmp/proot-{info['session']}"
+                subprocess.run(f"rm -rf {folder}", shell=True)
+                info["session"] = None
+                info["expires"] = None
+    save_data()
+
+auto_delete_expired.start()
 bot.run(TOKEN)
