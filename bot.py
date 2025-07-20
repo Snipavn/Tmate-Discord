@@ -8,9 +8,9 @@ from dotenv import load_dotenv
 #
 load_dotenv()
 TOKEN = os.getenv("TOKEN")
-GUILD_ID = YOUR_GUILD_ID  # Thay bằng ID server
-OWNER_ID = YOUR_OWNER_ID  # Thay bằng ID bạn
-ALLOWED_CHANNEL_ID = YOUR_CHANNEL_ID  # Thay bằng ID kênh cho phép lệnh
+GUILD_ID = 997017581766574230  # Thay bằng ID server
+OWNER_ID = 882844895902040104  # Thay bằng ID bạn
+ALLOWED_CHANNEL_ID = 1378918272812060742  # Thay bằng ID kênh cho phép lệnh
 
 intents = discord.Intents.default()
 bot = commands.Bot(command_prefix="!", intents=intents)
