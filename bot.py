@@ -5,13 +5,14 @@ import subprocess
 import os
 import uuid
 import shutil
+import time
 from dotenv import load_dotenv
 
 load_dotenv()
 TOKEN = os.getenv("TOKEN")
 
-OWNER_ID = 882844895902040104  # sửa lại ID owner
-ALLOWED_CHANNEL_ID = 1378918272812060742  # sửa lại ID kênh
+OWNER_ID = 882844895902040104
+ALLOWED_CHANNEL_ID = 1378918272812060742
 
 intents = discord.Intents.default()
 bot = commands.Bot(command_prefix="!", intents=intents)
@@ -42,7 +43,6 @@ async def deploy(interaction: discord.Interaction):
 
     if os.path.exists(folder):
         shutil.rmtree(folder)
-
     os.makedirs(folder, exist_ok=True)
 
     await interaction.response.send_message("🔧 Đang cài đặt VPS Alpine...")
@@ -57,33 +57,51 @@ async def deploy(interaction: discord.Interaction):
 
         subprocess.run(["tar", "-xzf", rootfs, "-C", folder], check=True)
 
+        # hostname
         hostname_script = f"echo 'root@servertipacvn' > {folder}/etc/hostname"
         subprocess.run(hostname_script, shell=True)
 
-        # Auto install tmate bên trong proot
-        startup_script = f"""
-        echo 'http://dl-cdn.alpinelinux.org/alpine/v3.19/main' > /etc/apk/repositories &&
-        apk update &&
-        apk add tmate openssh &&
-        tmate -S /tmp/tmate.sock new-session -d &&
-        tmate -S /tmp/tmate.sock wait tmate-ready &&
-        tmate -S /tmp/tmate.sock display -p '#{{tmate_ssh}}' > /tmp/ssh.txt &&
-        tail -f /dev/null
-        """
-
+        # start.sh
+        startup_script = """
+echo 'http://dl-cdn.alpinelinux.org/alpine/v3.19/main' > /etc/apk/repositories
+apk update
+apk add tmate openssh
+tmate -S /tmp/tmate.sock new-session -d
+tmate -S /tmp/tmate.sock wait tmate-ready
+tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}' > /tmp/ssh.txt
+tail -f /dev/null
+"""
         with open(f"{folder}/start.sh", "w") as f:
             f.write(startup_script)
         os.chmod(f"{folder}/start.sh", 0o755)
 
         session_id = str(uuid.uuid4())[:8]
-        command = f"proot -r {folder} -b /dev -b /proc -b /sys -w /root /bin/sh /start.sh"
-
         with open(f"{folder}/.session_id", "w") as f:
             f.write(session_id)
 
+        # Run VPS
+        command = f"proot -r {folder} -b /dev -b /proc -b /sys -w /root /bin/sh /start.sh"
         subprocess.Popen(command, shell=True)
 
-        await interaction.followup.send(f"✅ VPS Alpine đã khởi chạy!\n🆔 ID VPS của bạn: `{session_id}`")
+        # Chờ ssh.txt được tạo
+        ssh_path = f"{folder}/tmp/ssh.txt"
+        for _ in range(30):  # chờ tối đa 30 giây
+            if os.path.exists(ssh_path):
+                time.sleep(1)
+                break
+            time.sleep(1)
+
+        if os.path.exists(ssh_path):
+            with open(ssh_path) as f:
+                ssh_link = f.read().strip()
+
+            try:
+                await interaction.user.send(f"🔐 VPS của bạn đã sẵn sàng!\nSSH tmate:\n```{ssh_link}```")
+                await interaction.followup.send(f"✅ VPS Alpine đã khởi chạy!\n🆔 ID VPS: `{session_id}`\n📬 SSH đã gửi vào DM.")
+            except discord.Forbidden:
+                await interaction.followup.send(f"✅ VPS Alpine đã khởi chạy!\n🆔 ID VPS: `{session_id}`\n⚠️ Không thể gửi DM. Hãy bật tin nhắn riêng!")
+        else:
+            await interaction.followup.send("✅ VPS đã chạy nhưng chưa có SSH. Hãy thử lại sau vài giây.")
 
     except Exception as e:
         await interaction.followup.send(f"❌ Lỗi khi tạo VPS: {e}")
@@ -109,19 +127,5 @@ async def renewvps(interaction: discord.Interaction):
         await interaction.response.send_message("🔁 VPS đã được khởi chạy lại.")
     else:
         await interaction.response.send_message("❗ Không tìm thấy VPS để restart.")
-
-@tree.command(name="xemssh", description="Lấy SSH VPS hiện tại")
-async def getssh(interaction: discord.Interaction):
-    user_id = interaction.user.id
-    folder = get_user_folder(user_id)
-    ssh_path = f"{folder}/tmp/ssh.txt"
-
-    if os.path.exists(ssh_path):
-        with open(ssh_path) as f:
-            ssh_link = f.read().strip()
-        await interaction.user.send(f"🔐 SSH của bạn:\n```{ssh_link}```")
-        await interaction.response.send_message("✅ SSH đã gửi qua DM.")
-    else:
-        await interaction.response.send_message("❗ Chưa có SSH session hoặc VPS chưa chạy.")
 
 bot.run(TOKEN)
