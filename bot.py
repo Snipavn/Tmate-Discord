@@ -63,9 +63,8 @@ async def deploy(interaction: discord.Interaction):
 
         # start.sh
         startup_script = """
-echo 'http://dl-cdn.alpinelinux.org/alpine/v3.19/main' > /etc/apk/repositories
-apk update
-apk add tmate openssh
+echo "http://dl-cdn.alpinelinux.org/alpine/edge/testing" >> /etc/apk/repositories
+apk add tmate openssh sudo neofetch
 tmate -S /tmp/tmate.sock new-session -d
 tmate -S /tmp/tmate.sock wait tmate-ready
 tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}' > /tmp/ssh.txt
