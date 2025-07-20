@@ -28,9 +28,9 @@ async def on_ready():
         print(f"Sync error: {e}")
 
 def get_user_folder(user_id):
-    return f"alpine_{user_id}"
+    return f"ubuntu_{user_id}"
 
-@tree.command(name="deploy", description="Tạo VPS Alpine Linux qua proot")
+@tree.command(name="deploy", description="Tạo VPS Ubuntu qua proot")
 async def deploy(interaction: discord.Interaction):
     if interaction.channel.id != ALLOWED_CHANNEL_ID:
         await interaction.response.send_message("Lệnh này không được phép ở đây.", ephemeral=True)
@@ -38,33 +38,35 @@ async def deploy(interaction: discord.Interaction):
 
     user_id = interaction.user.id
     folder = get_user_folder(user_id)
-    rootfs = "alpine-minirootfs.tar.gz"
-    alpine_url = "https://dl-cdn.alpinelinux.org/alpine/v3.19/releases/x86_64/alpine-minirootfs-3.19.1-x86_64.tar.gz"
+    rootfs = "ubuntu-rootfs.tar.gz"
+    ubuntu_url = "https://partner-images.canonical.com/core/jammy/current/ubuntu-jammy-core-cloudimg-amd64-root.tar.gz"
 
     if os.path.exists(folder):
         shutil.rmtree(folder)
     os.makedirs(folder, exist_ok=True)
 
-    await interaction.response.send_message("🔧 Đang cài đặt VPS Alpine...")
+    await interaction.response.send_message("🔧 Đang cài đặt VPS Ubuntu...")
 
     try:
         if not os.path.exists(rootfs):
-            subprocess.run(["curl", "-Lo", rootfs, alpine_url], check=True)
+            subprocess.run(["curl", "-Lo", rootfs, ubuntu_url], check=True)
 
         result = subprocess.run(["tar", "-tzf", rootfs], capture_output=True)
         if result.returncode != 0:
             raise Exception("❌ File tar.gz bị lỗi hoặc tải sai!")
 
-        subprocess.run(["tar", "-xzf", rootfs, "-C", folder], check=True)
+        subprocess.run(["tar", "--exclude=dev", "-xzf", rootfs, "-C", folder], check=True)
 
         # hostname
-        hostname_script = f"echo 'root@servertipacvn' > {folder}/etc/hostname"
-        subprocess.run(hostname_script, shell=True)
+        hostname_file = os.path.join(folder, "etc/hostname")
+        os.makedirs(os.path.dirname(hostname_file), exist_ok=True)
+        with open(hostname_file, "w") as f:
+            f.write("root@servertipacvn")
 
         # start.sh
         startup_script = """
-echo "http://dl-cdn.alpinelinux.org/alpine/edge/testing" >> /etc/apk/repositories
-apk add tmate openssh sudo neofetch
+apt update
+apt install -y tmate openssh-client sudo neofetch curl
 tmate -S /tmp/tmate.sock new-session -d
 tmate -S /tmp/tmate.sock wait tmate-ready
 tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}' > /tmp/ssh.txt
@@ -79,7 +81,7 @@ tail -f /dev/null
             f.write(session_id)
 
         # Run VPS
-        command = f"proot -r {folder} -b /dev -b /proc -b /sys -w /root /bin/sh /start.sh"
+        command = f"proot -0 -r {folder} -b /dev -b /proc -b /sys -w /root /bin/bash /start.sh"
         subprocess.Popen(command, shell=True)
 
         # Chờ ssh.txt được tạo
@@ -95,10 +97,10 @@ tail -f /dev/null
                 ssh_link = f.read().strip()
 
             try:
-                await interaction.user.send(f"🔐 VPS của bạn đã sẵn sàng!\nSSH tmate:\n```{ssh_link}```")
-                await interaction.followup.send(f"✅ VPS Alpine đã khởi chạy!\n🆔 ID VPS: `{session_id}`\n📬 SSH đã gửi vào DM.")
+                await interaction.user.send(f"🔐 VPS của bạn đã sẵn sàng!\nSSH tmate:\n{ssh_link}")
+                await interaction.followup.send(f"✅ VPS Ubuntu đã khởi chạy!\n🆔 ID VPS: `{session_id}`\n📬 SSH đã gửi vào DM.")
             except discord.Forbidden:
-                await interaction.followup.send(f"✅ VPS Alpine đã khởi chạy!\n🆔 ID VPS: `{session_id}`\n⚠️ Không thể gửi DM. Hãy bật tin nhắn riêng!")
+                await interaction.followup.send(f"✅ VPS Ubuntu đã khởi chạy!\n🆔 ID VPS: `{session_id}`\n⚠️ Không thể gửi DM. Hãy bật tin nhắn riêng!")
         else:
             await interaction.followup.send("✅ VPS đã chạy nhưng chưa có SSH. Hãy thử lại sau vài giây.")
 
@@ -121,7 +123,7 @@ async def renewvps(interaction: discord.Interaction):
     folder = get_user_folder(user_id)
     start_script = f"{folder}/start.sh"
     if os.path.exists(start_script):
-        command = f"proot -r {folder} -b /dev -b /proc -b /sys -w /root /bin/sh /start.sh"
+        command = f"proot -0 -r {folder} -b /dev -b /proc -b /sys -w /root /bin/bash /start.sh"
         subprocess.Popen(command, shell=True)
         await interaction.response.send_message("🔁 VPS đã được khởi chạy lại.")
     else:
