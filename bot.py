@@ -1,141 +1,127 @@
 import discord
 from discord.ext import commands
 from discord import app_commands
-import os
 import subprocess
-import asyncio
+import os
+import uuid
+import shutil
 from dotenv import load_dotenv
 
 load_dotenv()
 TOKEN = os.getenv("TOKEN")
-OWNER_ID = 882844895902040104  # thay ID owner tại đây
-ALLOWED_CHANNEL_ID = 1378918272812060742  # thay ID kênh tại đây
-ALLOWED_ROLE_ID = 997017581766574234  # thay ID role tại đây
+
+OWNER_ID = 882844895902040104  # sửa lại ID owner
+ALLOWED_CHANNEL_ID = 1378918272812060742  # sửa lại ID kênh
 
 intents = discord.Intents.default()
-intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 tree = bot.tree
 
-users_config = {}
-active_sessions = {}
-
-ALPINE_URL = "https://dl-cdn.alpinelinux.org/alpine/latest-stable/releases/x86_64/alpine-minirootfs-latest-x86_64.tar.gz"
-
-def get_user_folder(uid):
-    return f"/tmp/vps_{uid}"
-
-async def download_and_extract(alpine_tar, folder):
-    await asyncio.create_subprocess_shell(f"curl -L {ALPINE_URL} -o {alpine_tar}",
-                                          stdout=asyncio.subprocess.DEVNULL)
-    os.makedirs(f"{folder}/alpine", exist_ok=True)
-    await asyncio.create_subprocess_shell(f"tar -xzf {alpine_tar} -C {folder}/alpine --strip-components=1",
-                                          stdout=asyncio.subprocess.DEVNULL)
-
-async def create_vps(uid):
-    folder = get_user_folder(uid)
-    alpine_tar = f"{folder}/alpine.tar.gz"
-    if not os.path.exists(alpine_tar):
-        await download_and_extract(alpine_tar, folder)
-
-    # set hostname
-    hostname_file = f"{folder}/alpine/etc/hostname"
-    os.makedirs(os.path.dirname(hostname_file), exist_ok=True)
-    with open(hostname_file, "w") as f:
-        f.write("servertipacvn")
-
-    # start script
-    start_sh = f"{folder}/alpine/root/start.sh"
-    os.makedirs(os.path.dirname(start_sh), exist_ok=True)
-    with open(start_sh, "w") as f:
-        f.write("#!/bin/sh\n")
-        f.write("apk update && apk add tmate openssh curl bash\n")
-        f.write("tmate -S /tmp/tmate.sock new-session -d\n")
-        f.write("tmate -S /tmp/tmate.sock wait tmate-ready\n")
-        f.write("tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}' > /tmp/ssh_link\n")
-        f.write("sleep 3600\n")
-    os.chmod(start_sh, 0o755)
-
-    cfg = users_config[uid]
-    cpu_nice = int(cfg["cpu"])
-    ram_limit = int(cfg["ram"]) * 1024
-
-    proot_cmd = (
-        f"proot -0 -r {folder}/alpine -b /dev -b /proc -b /sys -w /root /bin/sh -c "
-        f"\"ulimit -v {ram_limit}; nice -n {cpu_nice} /root/start.sh\""
-    )
-
-    session = subprocess.Popen(proot_cmd, shell=True)
-    active_sessions[uid] = session
-
-    for _ in range(20):
-        try:
-            with open(f"{folder}/alpine/tmp/ssh_link") as f:
-                return f.read().strip()
-        except:
-            await asyncio.sleep(2)
-    return None
-
-def is_allowed(inter):
-    if inter.channel.id != ALLOWED_CHANNEL_ID:
-        return False
-    if inter.user.id == OWNER_ID:
-        return True
-    for r in inter.user.roles:
-        if r.id == ALLOWED_ROLE_ID:
-            return True
-    return False
-
 @bot.event
 async def on_ready():
-    await tree.sync()
-    print("Bot is ready.")
+    print(f"Bot is ready as {bot.user}")
+    try:
+        synced = await tree.sync()
+        print(f"Synced {len(synced)} command(s)")
+    except Exception as e:
+        print(f"Sync error: {e}")
 
-@tree.command(name="shopping")
-@app_commands.describe(ram="Chọn dung lượng RAM: 2, 4, 8, 12, 16 (GB)")
-async def shopping(inter: discord.Interaction, ram: app_commands.Range[int, 2, 16]):
-    if not is_allowed(inter):
-        return await inter.response.send_message("Bạn không có quyền.", ephemeral=True)
-    await inter.response.send_message(f"Gói {ram}GB RAM (CPU nice {ram*10}) đã có sẵn để chọn qua /setcauhinh", ephemeral=True)
+def get_user_folder(user_id):
+    return f"alpine_{user_id}"
 
-@tree.command(name="setcauhinh")
-@app_commands.describe(ram="Chọn dung lượng RAM đã mua")
-async def setcauhinh(inter: discord.Interaction, ram: app_commands.Range[int, 2, 16]):
-    if not is_allowed(inter):
-        return await inter.response.send_message("Bạn không có quyền.", ephemeral=True)
-    users_config[str(inter.user.id)] = {"ram": ram, "cpu": ram * 10}
-    await inter.response.send_message(f"Đã cấu hình: {ram}GB RAM, CPU nice {ram*10}", ephemeral=True)
+@tree.command(name="deploy", description="Tạo VPS Alpine Linux qua proot")
+async def deploy(interaction: discord.Interaction):
+    if interaction.channel.id != ALLOWED_CHANNEL_ID:
+        await interaction.response.send_message("Lệnh này không được phép ở đây.", ephemeral=True)
+        return
 
-@tree.command(name="deploy")
-async def deploy(inter: discord.Interaction):
-    if not is_allowed(inter):
-        return await inter.response.send_message("Bạn không có quyền.", ephemeral=True)
-    uid = str(inter.user.id)
-    if uid not in users_config:
-        return await inter.response.send_message("Hãy dùng lệnh /setcauhinh trước.", ephemeral=True)
-    await inter.response.send_message("Đang khởi tạo VPS...", ephemeral=True)
-    ssh = await create_vps(uid)
-    if ssh:
-        try:
-            await inter.user.send(f"🔐 SSH VPS của bạn: `{ssh}`")
-        except:
-            await inter.followup.send("Không gửi được DM, hãy bật tin nhắn riêng.", ephemeral=True)
+    user_id = interaction.user.id
+    folder = get_user_folder(user_id)
+    rootfs = "alpine-minirootfs.tar.gz"
+    alpine_url = "https://dl-cdn.alpinelinux.org/alpine/v3.19/releases/x86_64/alpine-minirootfs-3.19.1-x86_64.tar.gz"
+
+    if os.path.exists(folder):
+        shutil.rmtree(folder)
+
+    os.makedirs(folder, exist_ok=True)
+
+    await interaction.response.send_message("🔧 Đang cài đặt VPS Alpine...")
+
+    try:
+        if not os.path.exists(rootfs):
+            subprocess.run(["curl", "-Lo", rootfs, alpine_url], check=True)
+
+        result = subprocess.run(["tar", "-tzf", rootfs], capture_output=True)
+        if result.returncode != 0:
+            raise Exception("❌ File tar.gz bị lỗi hoặc tải sai!")
+
+        subprocess.run(["tar", "-xzf", rootfs, "-C", folder], check=True)
+
+        hostname_script = f"echo 'root@servertipacvn' > {folder}/etc/hostname"
+        subprocess.run(hostname_script, shell=True)
+
+        # Auto install tmate bên trong proot
+        startup_script = f"""
+        echo 'http://dl-cdn.alpinelinux.org/alpine/v3.19/main' > /etc/apk/repositories &&
+        apk update &&
+        apk add tmate openssh &&
+        tmate -S /tmp/tmate.sock new-session -d &&
+        tmate -S /tmp/tmate.sock wait tmate-ready &&
+        tmate -S /tmp/tmate.sock display -p '#{{tmate_ssh}}' > /tmp/ssh.txt &&
+        tail -f /dev/null
+        """
+
+        with open(f"{folder}/start.sh", "w") as f:
+            f.write(startup_script)
+        os.chmod(f"{folder}/start.sh", 0o755)
+
+        session_id = str(uuid.uuid4())[:8]
+        command = f"proot -r {folder} -b /dev -b /proc -b /sys -w /root /bin/sh /start.sh"
+
+        with open(f"{folder}/.session_id", "w") as f:
+            f.write(session_id)
+
+        subprocess.Popen(command, shell=True)
+
+        await interaction.followup.send(f"✅ VPS Alpine đã khởi chạy!\n🆔 ID VPS của bạn: `{session_id}`")
+
+    except Exception as e:
+        await interaction.followup.send(f"❌ Lỗi khi tạo VPS: {e}")
+
+@tree.command(name="stopvps", description="Dừng VPS đã tạo")
+async def stopvps(interaction: discord.Interaction):
+    user_id = interaction.user.id
+    folder = get_user_folder(user_id)
+    if os.path.exists(folder):
+        shutil.rmtree(folder)
+        await interaction.response.send_message("🛑 VPS đã bị xoá.")
     else:
-        await inter.followup.send("Không thể lấy liên kết SSH.", ephemeral=True)
+        await interaction.response.send_message("❗ Bạn chưa có VPS đang chạy.")
 
-@tree.command(name="stopvps")
-async def stopvps(inter: discord.Interaction):
-    uid = str(inter.user.id)
-    sess = active_sessions.get(uid)
-    if sess:
-        sess.terminate()
-        del active_sessions[uid]
-        return await inter.response.send_message("Đã dừng VPS của bạn.", ephemeral=True)
-    await inter.response.send_message("Bạn chưa có VPS nào đang chạy.", ephemeral=True)
+@tree.command(name="renewvps", description="Gia hạn VPS nếu bị lỗi")
+async def renewvps(interaction: discord.Interaction):
+    user_id = interaction.user.id
+    folder = get_user_folder(user_id)
+    start_script = f"{folder}/start.sh"
+    if os.path.exists(start_script):
+        command = f"proot -r {folder} -b /dev -b /proc -b /sys -w /root /bin/sh /start.sh"
+        subprocess.Popen(command, shell=True)
+        await interaction.response.send_message("🔁 VPS đã được khởi chạy lại.")
+    else:
+        await interaction.response.send_message("❗ Không tìm thấy VPS để restart.")
 
-@tree.command(name="renew")
-async def renew(inter: discord.Interaction):
-    await stopvps(inter)
-    await deploy(inter)
+@tree.command(name="xemssh", description="Lấy SSH VPS hiện tại")
+async def getssh(interaction: discord.Interaction):
+    user_id = interaction.user.id
+    folder = get_user_folder(user_id)
+    ssh_path = f"{folder}/tmp/ssh.txt"
+
+    if os.path.exists(ssh_path):
+        with open(ssh_path) as f:
+            ssh_link = f.read().strip()
+        await interaction.user.send(f"🔐 SSH của bạn:\n```{ssh_link}```")
+        await interaction.response.send_message("✅ SSH đã gửi qua DM.")
+    else:
+        await interaction.response.send_message("❗ Chưa có SSH session hoặc VPS chưa chạy.")
 
 bot.run(TOKEN)
