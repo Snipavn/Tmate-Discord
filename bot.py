@@ -51,7 +51,12 @@ async def deploy(interaction: discord.Interaction):
         f"🔁 Đang tải Ubuntu cloud image về và chuẩn bị VPS...", ephemeral=False
     )
 
-    ubuntu_url = "https://cloud-images.ubuntu.com/releases/22.04/release/ubuntu-22.04-server-cloudimg-arm64-root.tar.xz"
+    arch = os.uname().machine
+    if "aarch64" in arch:
+        ubuntu_url = "https://cloud-images.ubuntu.com/releases/22.04/release/ubuntu-22.04-server-cloudimg-arm64-root.tar.xz"
+    else:
+        ubuntu_url = "https://cloud-images.ubuntu.com/releases/22.04/release/ubuntu-22.04-server-cloudimg-amd64-root.tar.xz"
+
     rootfs_path = os.path.join(folder_name, "rootfs.tar.xz")
 
     try:
@@ -61,12 +66,13 @@ async def deploy(interaction: discord.Interaction):
 
     start_sh = f"""#!/bin/bash
 cd "$(dirname "$0")"
-proot -0 -r . -b /dev -b /proc -b /sys -w /root /usr/bin/env -i HOME=/root PATH=/bin:/usr/bin:/sbin:/usr/sbin TERM=xterm bash -c "
+proot -0 -r . -b /dev -b /proc -b /sys -w /root /usr/bin/env -i HOME=/root PATH=/bin:/usr/bin:/sbin:/usr/sbin TERM=xterm bash -c '
 apt update &&
 apt install -y openssh-server tmate &&
-echo 'root:servertipacvn' | chpasswd &&
+echo "root:servertipacvn" | chpasswd &&
 hostnamectl set-hostname root@servertipacvn &&
-tmate -F" > ssh.txt 2>&1 &
+tmate -F > /ssh.txt 2>&1
+'
 """
     with open(os.path.join(folder_name, "start.sh"), "w") as f:
         f.write(start_sh)
