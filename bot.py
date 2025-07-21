@@ -4,8 +4,6 @@ from discord import app_commands
 import subprocess
 import os
 import uuid
-import shutil
-import time
 import psutil
 from dotenv import load_dotenv
 
@@ -21,126 +19,75 @@ tree = bot.tree
 
 @bot.event
 async def on_ready():
-    print(f"Bot đã sẵn sàng dưới tên {bot.user}")
+    print(f"Bot đã đăng nhập: {bot.user}")
     try:
         synced = await tree.sync()
         print(f"Đã sync {len(synced)} lệnh slash.")
     except Exception as e:
-        print(f"Lỗi sync: {e}")
+        print(f"Lỗi sync lệnh: {e}")
 
-def get_user_folder(user_id):
-    return f"debian_{user_id}"
-
-@tree.command(name="deploy", description="Tạo VPS Debian qua proot")
+@tree.command(name="deploy", description="Tạo VPS Debian và gửi SSH tmate về DM")
 async def deploy(interaction: discord.Interaction):
-    if interaction.channel.id != ALLOWED_CHANNEL_ID:
-        await interaction.response.send_message("⛔ Lệnh này không dùng được ở đây.", ephemeral=True)
+    if interaction.channel_id != ALLOWED_CHANNEL_ID:
+        await interaction.response.send_message("Bạn không được phép dùng lệnh này ở đây.", ephemeral=True)
         return
 
-    user_id = interaction.user.id
-    folder = get_user_folder(user_id)
-    rootfs = "debian-rootfs.tar.gz"
-    debian_url = "https://deb.debian.org/debian/dists/bookworm/main/installer-amd64/current/images/netboot/debian-installer/amd64/root.tar.gz"
+    await interaction.response.send_message("🔧 Đang khởi tạo VPS Debian... Vui lòng chờ...", ephemeral=True)
 
-    if os.path.exists(folder):
-        shutil.rmtree(folder)
-    os.makedirs(folder, exist_ok=True)
+    session_id = str(uuid.uuid4())[:8]
+    workdir = f"vps_{session_id}"
+    os.makedirs(workdir, exist_ok=True)
+    os.chdir(workdir)
 
-    await interaction.response.send_message("🔧 Đang khởi tạo VPS Debian...")
-
-    try:
-        if not os.path.exists(rootfs):
-            subprocess.run(["curl", "-Lo", rootfs, debian_url], check=True)
-
-        subprocess.run(["tar", "-xzf", rootfs, "-C", folder], check=True)
-
-        # Đặt hostname
-        with open(f"{folder}/etc/hostname", "w") as f:
-            f.write("root@servertipacvn\n")
-
-        # start.sh
-        startup_script = """
+    with open("start.sh", "w") as f:
+        f.write("""#!/bin/bash
+apt update && apt install -y wget proot tar curl openssh-client tmate
+wget -O root.tar.gz https://deb.debian.org/debian/dists/bookworm/main/installer-amd64/current/images/netboot/debian-installer/amd64/root.tar.gz
+mkdir -p debian
+tar -xf root.tar.gz -C debian
+cat > start-debian.sh << 'EOL'
+#!/bin/bash
+unset LD_PRELOAD
+proot -R debian -b /dev -b /proc -b /sys -b /tmp -b /etc/resolv.conf:/etc/resolv.conf -w /root /bin/bash --login
+EOL
+chmod +x start-debian.sh
+cat > debian/root/.bashrc << 'EOL'
 apt update
-apt install -y tmate openssh-server sudo neofetch
-tmate -S /tmp/tmate.sock new-session -d
-tmate -S /tmp/tmate.sock wait tmate-ready
-tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}' > /tmp/ssh.txt
-tail -f /dev/null
-"""
-        with open(f"{folder}/start.sh", "w") as f:
-            f.write(startup_script)
-        os.chmod(f"{folder}/start.sh", 0o755)
+apt install -y curl wget sudo gnupg2 tmate lsb-release
+tmate new-session -d
+tmate wait tmate-ready
+tmate show-messages
+tmate display -p '#{tmate_ssh}' > /root/ssh.txt
+echo "SSH ready:"
+cat /root/ssh.txt
+while :; do sleep 60; done
+EOL
+chmod +x debian/root/.bashrc
+./start-debian.sh
+        """)
 
-        session_id = str(uuid.uuid4())[:8]
-        with open(f"{folder}/.session_id", "w") as f:
-            f.write(session_id)
+    subprocess.Popen(["bash", "start.sh"])
 
-        command = f"proot -r {folder} -b /dev -b /proc -b /sys -w /root /bin/bash /start.sh"
-        subprocess.Popen(command, shell=True)
+    embed = discord.Embed(
+        title="✅ VPS Debian đang khởi động...",
+        description="Sau vài giây, SSH tmate sẽ được gửi về DM của bạn.",
+        color=0x00ff00
+    )
+    embed.set_footer(text="https://dsc.gg/servertipacvn")
+    await interaction.followup.send(embed=embed, ephemeral=True)
 
-        ssh_path = f"{folder}/tmp/ssh.txt"
-        for _ in range(30):
-            if os.path.exists(ssh_path):
-                time.sleep(1)
-                break
-            time.sleep(1)
-
-        embed = discord.Embed(
-            title="✅ VPS Debian đã sẵn sàng!",
-            description=f"🆔 ID VPS: `{session_id}`\n📬 SSH đã gửi vào DM của bạn.",
-            color=0x00ff00
-        )
-        embed.set_footer(text="Tham gia Discord: https://dsc.gg/servertipacvn")
-
-        if os.path.exists(ssh_path):
-            with open(ssh_path) as f:
-                ssh_link = f.read().strip()
-
-            try:
-                await interaction.user.send(f"🔐 VPS của bạn:\n`{ssh_link}`")
-                await interaction.followup.send(embed=embed)
-            except discord.Forbidden:
-                embed.description += "\n⚠️ Không thể gửi DM. Hãy bật tin nhắn riêng!"
-                await interaction.followup.send(embed=embed)
-        else:
-            await interaction.followup.send("✅ VPS đã chạy nhưng chưa có SSH. Hãy thử lại sau vài giây.")
-
-    except Exception as e:
-        await interaction.followup.send(f"❌ Lỗi tạo VPS: {e}")
-
-@tree.command(name="stopvps", description="Xoá VPS của bạn")
-async def stopvps(interaction: discord.Interaction):
-    folder = get_user_folder(interaction.user.id)
-    if os.path.exists(folder):
-        shutil.rmtree(folder)
-        await interaction.response.send_message("🛑 VPS đã bị xoá.")
-    else:
-        await interaction.response.send_message("❗ Bạn chưa có VPS nào đang chạy.")
-
-@tree.command(name="renewvps", description="Khởi chạy lại VPS nếu bị lỗi")
-async def renewvps(interaction: discord.Interaction):
-    folder = get_user_folder(interaction.user.id)
-    if os.path.exists(f"{folder}/start.sh"):
-        command = f"proot -r {folder} -b /dev -b /proc -b /sys -w /root /bin/bash /start.sh"
-        subprocess.Popen(command, shell=True)
-        await interaction.response.send_message("🔁 VPS đã được khởi chạy lại.")
-    else:
-        await interaction.response.send_message("❗ Không tìm thấy VPS để restart.")
-
-@tree.command(name="statusvps", description="Xem trạng thái CPU & RAM máy thật")
+@tree.command(name="statusvps", description="Xem tình trạng CPU và RAM VPS")
 async def statusvps(interaction: discord.Interaction):
-    cpu = psutil.cpu_percent(interval=1)
+    cpu_percent = psutil.cpu_percent(interval=1)
     ram = psutil.virtual_memory()
-    ram_used = ram.used // (1024 * 1024)
-    ram_total = ram.total // (1024 * 1024)
     ram_percent = ram.percent
 
     embed = discord.Embed(
-        title="📊 Trạng thái VPS (máy chủ)",
-        description=f"**CPU:** {cpu}%\n**RAM:** {ram_used}MB / {ram_total}MB ({ram_percent}%)",
+        title="📊 Trạng thái VPS hiện tại",
+        description=f"**CPU:** {cpu_percent}%\n**RAM:** {ram_percent}%",
         color=0x3498db
     )
-    embed.set_footer(text="Tham gia Discord: https://dsc.gg/servertipacvn")
-    await interaction.response.send_message(embed=embed)
+    embed.set_footer(text="https://dsc.gg/servertipacvn")
+    await interaction.response.send_message(embed=embed, ephemeral=True)
 
 bot.run(TOKEN)
