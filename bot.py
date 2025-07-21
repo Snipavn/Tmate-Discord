@@ -76,7 +76,8 @@ async def deploy(interaction: discord.Interaction):
         # Script start.sh bên trong VPS
         start_sh = """#!/bin/bash
 mkdir -p /run/resolvconf && echo "nameserver 1.1.1.1" > /run/resolvconf/resolv.conf
-apt update
+apt-key adv --keyserver keyserver.ubuntu.com --recv-keys 871920D1991BC93C || true
+apt-get update
 apt install -y tmate
 tmate -F > /root/tmate.log 2>&1 &
 sleep 5
