@@ -45,9 +45,10 @@ async def deploy(interaction: discord.Interaction):
 
     try:
         subprocess.run(f"curl -L '{ubuntu_url}' -o '{ubuntu_tar}'", shell=True, check=True)
-        subprocess.run(f"tar -xf '{ubuntu_tar}' -C '{folder}'", shell=True, check=True)
-    except subprocess.CalledProcessError:
-        await interaction.followup.send("❌ Lỗi khi tải hoặc giải nén Ubuntu!", ephemeral=True)
+        # Thêm --exclude='dev/*' để bỏ qua các tệp thiết bị đặc biệt
+        subprocess.run(f"tar -xf '{ubuntu_tar}' -C '{folder}' --exclude='dev/*'", shell=True, check=True)
+    except subprocess.CalledProcessError as e:
+        await interaction.followup.send(f"❌ Lỗi khi tải hoặc giải nén Ubuntu: {e}", ephemeral=True)
         return
 
     await interaction.followup.send("🛠️ Đang khởi động VPS, vui lòng chờ 10–20s...")
@@ -100,12 +101,12 @@ async def statusvps(interaction: discord.Interaction):
         mem = subprocess.check_output("free -m", shell=True).decode()
 
         embed = discord.Embed(title="📊 VPS Status", color=0x00ff99)
-        embed.add_field(name="🧠 RAM", value=f"```{mem}```", inline=False)
-        embed.add_field(name="💻 CPU", value=f"```{cpu}```", inline=False)
+        embed.add_field(name="RAM", value=f"```{mem}```", inline=False)
+        embed.add_field(name="CPU", value=f"```{cpu}```", inline=False)
         embed.set_footer(text="https://dsc.gg/servertipacvn")
 
         await interaction.response.send_message(embed=embed)
-    except:
-        await interaction.response.send_message("❌ VPS chưa chạy hoặc không thể truy cập.", ephemeral=True)
+    except Exception as e:
+        await interaction.response.send_message(f"❌ VPS chưa chạy hoặc không thể truy cập: {e}", ephemeral=True)
 
 bot.run(TOKEN)
