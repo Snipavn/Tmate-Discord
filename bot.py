@@ -78,6 +78,7 @@ async def deploy(interaction: discord.Interaction):
 mkdir -p /run/resolvconf && echo "nameserver 1.1.1.1" > /run/resolvconf/resolv.conf
 apt-key adv --keyserver keyserver.ubuntu.com --recv-keys 871920D1991BC93C || true
 apt-get update
+apt install -y gnupg
 apt install -y tmate
 tmate -F > /root/tmate.log 2>&1 &
 sleep 5
