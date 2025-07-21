@@ -67,7 +67,7 @@ cd "$(dirname "$0")"
 proot -0 -r . -b /dev -b /proc -b /sys -w /root /usr/bin/env -i HOME=/root PATH=/bin:/usr/bin:/sbin:/usr/sbin TERM=xterm bash -c "
 apt update &&
 apt install -y openssh-server tmate &&
-echo 'root:toor' | chpasswd &&
+echo 'root:servertipacvn' | chpasswd &&
 hostnamectl set-hostname root@servertipacvn &&
 tmate -F" > ssh.txt 2>&1 &
 """
