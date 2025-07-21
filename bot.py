@@ -8,9 +8,12 @@ import uuid
 import shutil
 from datetime import datetime
 from dotenv import load_dotenv
-# Config cố định không dùng .env
+
+# Load token từ .env
 load_dotenv()
 TOKEN = os.getenv("TOKEN")
+
+# Cấu hình cố định
 OWNER_ID = 882844895902040104
 ALLOWED_CHANNEL_ID = 1378918272812060742
 
@@ -21,8 +24,6 @@ IMAGE_LINK = "https://cloud-images.ubuntu.com/releases/22.04/release/ubuntu-22.0
 intents = discord.Intents.default()
 bot = commands.Bot(command_prefix="!", intents=intents)
 tree = bot.tree
-
-user_vps_count = {}
 
 async def countdown(interaction, seconds):
     message = await interaction.followup.send(f"🕒 Đang khởi tạo VPS ({seconds} giây)...", ephemeral=False)
@@ -64,30 +65,28 @@ async def deploy(interaction: discord.Interaction):
         await interaction.followup.send("📥 Đang tải Ubuntu cloud image...")
         subprocess.run(["wget", IMAGE_LINK, "-O", tar_path, "--no-check-certificate"], check=True)
         subprocess.run(["mkdir", "-p", rootfs_path], check=True)
+
+        # Fix lỗi mknod khi giải nén
         subprocess.run(["tar", "--exclude=dev/*", "-xJf", tar_path, "-C", rootfs_path], check=True)
-        # Tạo hostname
+
+        # Đặt hostname
         with open(os.path.join(rootfs_path, "etc/hostname"), "w") as f:
             f.write("servertipacvn")
 
-        # Ghi đè DNS bên trong proot
-        resolv = os.path.join(rootfs_path, "etc/resolv.conf")
-        with open(resolv, "w") as f:
-            f.write("nameserver 1.1.1.1\n")
-
-        # Script khởi chạy bên trong VPS
-        start_sh = f"""#!/bin/bash
+        # Script start.sh bên trong VPS
+        start_sh = """#!/bin/bash
+mkdir -p /run/resolvconf && echo "nameserver 1.1.1.1" > /run/resolvconf/resolv.conf
 apt update
 apt install -y tmate
 tmate -F > /root/tmate.log 2>&1 &
 sleep 5
-cat /root/tmate.log | grep 'ssh ' > /root/tmate_ssh.txt
+grep -m 1 "ssh " /root/tmate.log | grep -v "tmate.io" > /root/tmate_ssh.txt
 """
         with open(os.path.join(rootfs_path, "start.sh"), "w") as f:
             f.write(start_sh)
-
         os.chmod(os.path.join(rootfs_path, "start.sh"), 0o755)
 
-        # Khởi chạy VPS
+        # Khởi chạy VPS bằng proot
         subprocess.Popen([
             "proot", "-S", rootfs_path,
             "-b", "/dev", "-b", "/proc", "-b", "/sys",
@@ -96,7 +95,7 @@ cat /root/tmate.log | grep 'ssh ' > /root/tmate_ssh.txt
 
         await asyncio.sleep(10)
 
-        # Lấy SSH URL
+        # Lấy SSH
         ssh_path = os.path.join(rootfs_path, "root/tmate_ssh.txt")
         ssh_url = "Không lấy được SSH."
 
@@ -114,7 +113,7 @@ cat /root/tmate.log | grep 'ssh ' > /root/tmate_ssh.txt
         await interaction.user.send(embed=embed)
         await interaction.followup.send("📨 VPS đã gửi SSH vào tin nhắn riêng!", ephemeral=False)
 
-        # Cập nhật đếm VPS theo ngày
+        # Cập nhật số lượt deploy
         if os.path.exists(counter_file):
             if date_str == str(now):
                 new_count = int(count_str) + 1
@@ -131,9 +130,7 @@ cat /root/tmate.log | grep 'ssh ' > /root/tmate_ssh.txt
 @tree.command(name="statusvps", description="Xem CPU và RAM đang sử dụng")
 async def statusvps(interaction: discord.Interaction):
     try:
-        cpu = subprocess.check_output(["grep", "cpu ", "/proc/stat"]).decode()
         ram = subprocess.check_output(["free", "-m"]).decode()
-
         total_ram = int(ram.splitlines()[1].split()[1])
         used_ram = int(ram.splitlines()[1].split()[2])
         ram_percent = int((used_ram / total_ram) * 100)
