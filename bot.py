@@ -9,7 +9,9 @@ import psutil
 import asyncio
 from datetime import datetime
 import random
+from dotenv import load_dotenv
 
+load_dotenv()
 TOKEN = os.getenv("TOKEN")
 OWNER_ID = 882844895902040104
 ALLOWED_CHANNEL_ID = 1378918272812060742
