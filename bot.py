@@ -45,7 +45,7 @@ async def deploy(interaction: discord.Interaction):
 
     try:
         subprocess.run(f"curl -L '{ubuntu_url}' -o '{ubuntu_tar}'", shell=True, check=True)
-        subprocess.run(f"proot --link2symlink tar -xf '{ubuntu_tar}' -C '{folder}'", shell=True, check=True)
+        subprocess.run(f"tar -xf '{ubuntu_tar}' -C '{folder}'", shell=True, check=True)
     except subprocess.CalledProcessError:
         await interaction.followup.send("❌ Lỗi khi tải hoặc giải nén Ubuntu!", ephemeral=True)
         return
