@@ -9,6 +9,7 @@ import shutil
 from datetime import datetime
 from dotenv import load_dotenv
 # Config cố định không dùng .env
+load_dotenv()
 TOKEN = os.getenv("TOKEN")
 OWNER_ID = 882844895902040104
 ALLOWED_CHANNEL_ID = 1378918272812060742
