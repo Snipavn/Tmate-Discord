@@ -9,15 +9,12 @@ import shutil
 from datetime import datetime
 from dotenv import load_dotenv
 
-# Load token từ .env
 load_dotenv()
 TOKEN = os.getenv("TOKEN")
 
-# Cấu hình cố định
 OWNER_ID = 882844895902040104
 ALLOWED_CHANNEL_ID = 1378918272812060742
 
-MAX_VPS_PER_DAY = 2
 VPS_FOLDER = "vps_data"
 IMAGE_LINK = "https://cloud-images.ubuntu.com/releases/22.04/release/ubuntu-22.04-server-cloudimg-amd64-root.tar.xz"
 
@@ -39,17 +36,8 @@ async def deploy(interaction: discord.Interaction):
         return
 
     user_id = str(interaction.user.id)
-    now = datetime.utcnow().date()
     user_folder = os.path.join(VPS_FOLDER, user_id)
     os.makedirs(user_folder, exist_ok=True)
-
-    counter_file = os.path.join(user_folder, "counter.txt")
-    if os.path.exists(counter_file):
-        with open(counter_file, "r") as f:
-            date_str, count_str = f.read().split(",")
-            if date_str == str(now) and int(count_str) >= MAX_VPS_PER_DAY:
-                await interaction.response.send_message("❌ Bạn đã tạo tối đa 2 VPS hôm nay.", ephemeral=True)
-                return
 
     await interaction.response.send_message("🔧 Bắt đầu tạo VPS...", ephemeral=False)
     await countdown(interaction, 15)
@@ -65,15 +53,11 @@ async def deploy(interaction: discord.Interaction):
         await interaction.followup.send("📥 Đang tải Ubuntu cloud image...")
         subprocess.run(["wget", IMAGE_LINK, "-O", tar_path, "--no-check-certificate"], check=True)
         subprocess.run(["mkdir", "-p", rootfs_path], check=True)
-
-        # Fix lỗi mknod khi giải nén
         subprocess.run(["tar", "--exclude=dev/*", "-xJf", tar_path, "-C", rootfs_path], check=True)
 
-        # Đặt hostname
         with open(os.path.join(rootfs_path, "etc/hostname"), "w") as f:
             f.write("servertipacvn")
 
-        # Script start.sh bên trong VPS
         start_sh = """#!/bin/bash
 mkdir -p /run/resolvconf && echo "nameserver 1.1.1.1" > /run/resolvconf/resolv.conf
 apt-key adv --keyserver keyserver.ubuntu.com --recv-keys 871920D1991BC93C || true
@@ -88,7 +72,6 @@ grep -m 1 "ssh " /root/tmate.log | grep -v "tmate.io" > /root/tmate_ssh.txt
             f.write(start_sh)
         os.chmod(os.path.join(rootfs_path, "start.sh"), 0o755)
 
-        # Khởi chạy VPS bằng proot
         subprocess.Popen([
             "proot", "-S", rootfs_path,
             "-b", "/dev", "-b", "/proc", "-b", "/sys",
@@ -97,7 +80,6 @@ grep -m 1 "ssh " /root/tmate.log | grep -v "tmate.io" > /root/tmate_ssh.txt
 
         await asyncio.sleep(10)
 
-        # Lấy SSH
         ssh_path = os.path.join(rootfs_path, "root/tmate_ssh.txt")
         ssh_url = "Không lấy được SSH."
 
@@ -115,19 +97,18 @@ grep -m 1 "ssh " /root/tmate.log | grep -v "tmate.io" > /root/tmate_ssh.txt
         await interaction.user.send(embed=embed)
         await interaction.followup.send("📨 VPS đã gửi SSH vào tin nhắn riêng!", ephemeral=False)
 
-        # Cập nhật số lượt deploy
-        if os.path.exists(counter_file):
-            if date_str == str(now):
-                new_count = int(count_str) + 1
-            else:
-                new_count = 1
-        else:
-            new_count = 1
-        with open(counter_file, "w") as f:
-            f.write(f"{now},{new_count}")
-
     except Exception as e:
         await interaction.followup.send(f"❌ Lỗi khi tạo VPS: {e}")
+
+@tree.command(name="deletevps", description="Xoá toàn bộ VPS bạn đã tạo")
+async def deletevps(interaction: discord.Interaction):
+    user_id = str(interaction.user.id)
+    user_folder = os.path.join(VPS_FOLDER, user_id)
+    if os.path.exists(user_folder):
+        shutil.rmtree(user_folder)
+        await interaction.response.send_message("🗑️ Đã xoá toàn bộ VPS của bạn.", ephemeral=True)
+    else:
+        await interaction.response.send_message("⚠️ Bạn chưa có VPS nào để xoá.", ephemeral=True)
 
 @tree.command(name="statusvps", description="Xem CPU và RAM đang sử dụng")
 async def statusvps(interaction: discord.Interaction):
