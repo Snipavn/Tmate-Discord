@@ -6,14 +6,16 @@ import subprocess
 import asyncio
 import uuid
 import shutil
-from dotenv import load_dotenv
 from datetime import datetime
-
-load_dotenv()
+from dotenv import load_dotenv
+# Config cố định không dùng .env
 TOKEN = os.getenv("TOKEN")
-
 OWNER_ID = 882844895902040104
 ALLOWED_CHANNEL_ID = 1378918272812060742
+
+MAX_VPS_PER_DAY = 2
+VPS_FOLDER = "vps_data"
+IMAGE_LINK = "https://cloud-images.ubuntu.com/releases/22.04/release/ubuntu-22.04-server-cloudimg-arm64-root.tar.xz"
 
 intents = discord.Intents.default()
 bot = commands.Bot(command_prefix="!", intents=intents)
@@ -21,123 +23,139 @@ tree = bot.tree
 
 user_vps_count = {}
 
-@bot.event
-async def on_ready():
-    print(f"Bot đã sẵn sàng dưới tên {bot.user}")
-    try:
-        synced = await tree.sync()
-        print(f"Đã sync {len(synced)} lệnh slash.")
-    except Exception as e:
-        print(f"Lỗi khi sync lệnh: {e}")
+async def countdown(interaction, seconds):
+    message = await interaction.followup.send(f"🕒 Đang khởi tạo VPS ({seconds} giây)...", ephemeral=False)
+    for remaining in range(seconds, 0, -1):
+        await message.edit(content=f"🕒 Đang khởi tạo VPS ({remaining} giây)...")
+        await asyncio.sleep(1)
+    await message.edit(content="✅ Đang chạy VPS...")
 
-@tree.command(name="deploy", description="Tạo VPS Ubuntu bằng proot (giới hạn 2 VPS/ngày)")
+@tree.command(name="deploy", description="Tạo VPS Ubuntu cloud image")
 async def deploy(interaction: discord.Interaction):
     if interaction.channel_id != ALLOWED_CHANNEL_ID:
-        return await interaction.response.send_message("⛔ Không được phép dùng lệnh này ở đây.", ephemeral=True)
+        await interaction.response.send_message("❌ Lệnh này chỉ dùng trong kênh được cho phép.", ephemeral=True)
+        return
 
-    user_id = interaction.user.id
-    today = datetime.utcnow().date()
-    if user_id not in user_vps_count or user_vps_count[user_id]["date"] != today:
-        user_vps_count[user_id] = {"count": 0, "date": today}
+    user_id = str(interaction.user.id)
+    now = datetime.utcnow().date()
+    user_folder = os.path.join(VPS_FOLDER, user_id)
+    os.makedirs(user_folder, exist_ok=True)
 
-    if user_vps_count[user_id]["count"] >= 2:
-        return await interaction.response.send_message("❌ Bạn đã tạo tối đa 2 VPS hôm nay.", ephemeral=True)
+    counter_file = os.path.join(user_folder, "counter.txt")
+    if os.path.exists(counter_file):
+        with open(counter_file, "r") as f:
+            date_str, count_str = f.read().split(",")
+            if date_str == str(now) and int(count_str) >= MAX_VPS_PER_DAY:
+                await interaction.response.send_message("❌ Bạn đã tạo tối đa 2 VPS hôm nay.", ephemeral=True)
+                return
 
-    user_vps_count[user_id]["count"] += 1
-    folder_name = f"vps_{user_id}_{uuid.uuid4().hex[:6]}"
-    os.makedirs(folder_name, exist_ok=True)
+    await interaction.response.send_message("🔧 Bắt đầu tạo VPS...", ephemeral=False)
+    await countdown(interaction, 15)
 
-    await interaction.response.send_message(
-        f"🔁 Đang tải Ubuntu cloud image về và chuẩn bị VPS...", ephemeral=False
-    )
+    vps_id = str(uuid.uuid4())[:8]
+    vps_path = os.path.join(user_folder, vps_id)
+    os.makedirs(vps_path, exist_ok=True)
 
-    arch = os.uname().machine
-    if "aarch64" in arch:
-        ubuntu_url = "https://cloud-images.ubuntu.com/releases/22.04/release/ubuntu-22.04-server-cloudimg-arm64-root.tar.xz"
-    else:
-        ubuntu_url = "https://cloud-images.ubuntu.com/releases/22.04/release/ubuntu-22.04-server-cloudimg-amd64-root.tar.xz"
-
-    rootfs_path = os.path.join(folder_name, "rootfs.tar.xz")
+    tar_path = os.path.join(vps_path, "ubuntu.tar.xz")
+    rootfs_path = os.path.join(vps_path, "ubuntu")
 
     try:
-        subprocess.run(["wget", "-O", rootfs_path, ubuntu_url], check=True)
-    except subprocess.CalledProcessError:
-        return await interaction.followup.send("❌ Tải rootfs thất bại.", ephemeral=False)
+        await interaction.followup.send("📥 Đang tải Ubuntu cloud image...")
+        subprocess.run(["wget", IMAGE_LINK, "-O", tar_path, "--no-check-certificate"], check=True)
+        subprocess.run(["mkdir", "-p", rootfs_path], check=True)
+        subprocess.run(["tar", "-xJf", tar_path, "-C", rootfs_path], check=True)
 
-    start_sh = f"""#!/bin/bash
-cd "$(dirname "$0")"
-proot -0 -r . -b /dev -b /proc -b /sys -w /root /usr/bin/env -i HOME=/root PATH=/bin:/usr/bin:/sbin:/usr/sbin TERM=xterm bash -c '
-apt update &&
-apt install -y openssh-server tmate &&
-echo "root:servertipacvn" | chpasswd &&
-hostnamectl set-hostname root@servertipacvn &&
-tmate -F > /ssh.txt 2>&1
-'
+        # Tạo hostname
+        with open(os.path.join(rootfs_path, "etc/hostname"), "w") as f:
+            f.write("servertipacvn")
+
+        # Ghi đè DNS bên trong proot
+        resolv = os.path.join(rootfs_path, "etc/resolv.conf")
+        with open(resolv, "w") as f:
+            f.write("nameserver 1.1.1.1\n")
+
+        # Script khởi chạy bên trong VPS
+        start_sh = f"""#!/bin/bash
+apt update
+apt install -y tmate
+tmate -F > /root/tmate.log 2>&1 &
+sleep 5
+cat /root/tmate.log | grep 'ssh ' > /root/tmate_ssh.txt
 """
-    with open(os.path.join(folder_name, "start.sh"), "w") as f:
-        f.write(start_sh)
-    os.chmod(os.path.join(folder_name, "start.sh"), 0o755)
+        with open(os.path.join(rootfs_path, "start.sh"), "w") as f:
+            f.write(start_sh)
 
-    try:
-        subprocess.run(
-            ["tar", "--exclude=dev/*", "-xf", rootfs_path, "-C", folder_name],
-            check=True
+        os.chmod(os.path.join(rootfs_path, "start.sh"), 0o755)
+
+        # Khởi chạy VPS
+        subprocess.Popen([
+            "proot", "-S", rootfs_path,
+            "-b", "/dev", "-b", "/proc", "-b", "/sys",
+            "/bin/bash", "-c", "bash /start.sh"
+        ])
+
+        await asyncio.sleep(10)
+
+        # Lấy SSH URL
+        ssh_path = os.path.join(rootfs_path, "root/tmate_ssh.txt")
+        ssh_url = "Không lấy được SSH."
+
+        if os.path.exists(ssh_path):
+            with open(ssh_path, "r") as f:
+                ssh_url = f.read().strip()
+
+        embed = discord.Embed(
+            title="🔗 SSH VPS đã sẵn sàng!",
+            description=f"```{ssh_url}```",
+            color=discord.Color.green()
         )
-    except subprocess.CalledProcessError:
-        return await interaction.followup.send("❌ Giải nén rootfs thất bại.", ephemeral=False)
+        embed.set_footer(text="https://dsc.gg/servertipacvn")
 
-    await interaction.followup.send(
-        embed=discord.Embed(
-            title="✅ VPS Đã sẵn sàng!",
-            description="Tạo VPS thành công, bắt đầu đếm ngược khởi động...",
-            color=discord.Color.green(),
-        ).set_footer(text="https://dsc.gg/servertipacvn"),
-        ephemeral=False
-    )
+        await interaction.user.send(embed=embed)
+        await interaction.followup.send("📨 VPS đã gửi SSH vào tin nhắn riêng!", ephemeral=False)
 
-    for i in range(10, 0, -1):
-        await interaction.followup.send(f"🕒 Remaining: {i} giây...", ephemeral=False)
-        await asyncio.sleep(1)
+        # Cập nhật đếm VPS theo ngày
+        if os.path.exists(counter_file):
+            if date_str == str(now):
+                new_count = int(count_str) + 1
+            else:
+                new_count = 1
+        else:
+            new_count = 1
+        with open(counter_file, "w") as f:
+            f.write(f"{now},{new_count}")
 
-    subprocess.Popen(["bash", "start.sh"], cwd=folder_name)
+    except Exception as e:
+        await interaction.followup.send(f"❌ Lỗi khi tạo VPS: {e}")
 
-    await asyncio.sleep(8)
-    ssh_path = os.path.join(folder_name, "ssh.txt")
-    ssh_msg = "Không thể đọc SSH"
-    if os.path.exists(ssh_path):
-        with open(ssh_path, "r") as f:
-            ssh_msg = f.read().strip()
-
-    try:
-        await interaction.user.send(f"🔐 SSH của bạn:\n```{ssh_msg}```\n USER: root\n PASSWORD: servertipacvn")
-    except:
-        await interaction.followup.send("⚠️ Không thể gửi tin nhắn riêng. Mở DM để nhận SSH.", ephemeral=False)
-
-@tree.command(name="statusvps", description="Xem tình trạng CPU & RAM VPS")
+@tree.command(name="statusvps", description="Xem CPU và RAM đang sử dụng")
 async def statusvps(interaction: discord.Interaction):
     try:
-        cpu = subprocess.check_output("top -bn1 | grep 'Cpu(s)'", shell=True).decode()
-        ram = subprocess.check_output("free -m", shell=True).decode()
+        cpu = subprocess.check_output(["grep", "cpu ", "/proc/stat"]).decode()
+        ram = subprocess.check_output(["free", "-m"]).decode()
 
-        cpu_percent = cpu.split("%")[0].split()[-1]
-        ram_line = ram.split("\n")[1].split()
-        ram_used = ram_line[2]
-        ram_total = ram_line[1]
+        total_ram = int(ram.splitlines()[1].split()[1])
+        used_ram = int(ram.splitlines()[1].split()[2])
+        ram_percent = int((used_ram / total_ram) * 100)
 
         embed = discord.Embed(
             title="📊 Trạng thái VPS",
-            description=f"**<:cpu:1147496245766668338>CPU sử dụng:** {cpu_percent}%\n**<:RAM:1147501868264722442>RAM sử dụng:** {ram_used}/{ram_total} MB",
+            description=f"**RAM**: {used_ram}/{total_ram} MB ({ram_percent}%)\n**CPU**: Không đo trực tiếp",
             color=discord.Color.blue()
         )
         embed.set_footer(text="https://dsc.gg/servertipacvn")
-        await interaction.response.send_message(embed=embed)
-    except Exception as e:
-        await interaction.response.send_message(f"❌ Lỗi khi lấy trạng thái VPS: {e}", ephemeral=True)
 
-@tree.command(name="chat", description="Nói chuyện bố láo")
-@app_commands.describe(message="Nội dung chat")
-async def chat(interaction: discord.Interaction, message: str):
-    response = f"Ơ kìa {interaction.user.name}, mày rảnh quá ha 😏 — tao nghe đây: \"{message}\""
-    await interaction.response.send_message(response, ephemeral=False)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+    except Exception as e:
+        await interaction.response.send_message(f"Lỗi khi lấy trạng thái VPS: {e}", ephemeral=True)
+
+@bot.event
+async def on_ready():
+    try:
+        synced = await tree.sync()
+        print(f"✅ Đã sync {len(synced)} lệnh slash.")
+    except Exception as e:
+        print(f"Lỗi khi sync lệnh: {e}")
+    print(f"Bot đang chạy với tên: {bot.user}")
 
 bot.run(TOKEN)
