@@ -60,10 +60,11 @@ async def deploy(interaction: discord.Interaction):
 
         start_sh = """#!/bin/bash
 mkdir -p /run/resolvconf && echo "nameserver 1.1.1.1" > /run/resolvconf/resolv.conf
-apt-key adv --keyserver keyserver.ubuntu.com --recv-keys 871920D1991BC93C || true
+apt-get update --allow-unauthenticated || true
+DEBIAN_FRONTEND=noninteractive apt-get install -y gnupg software-properties-common curl
+add-apt-repository -y ppa:tmate.io/archive
 apt-get update
-apt install -y gnupg
-apt install -y tmate
+DEBIAN_FRONTEND=noninteractive apt-get install -y tmate
 tmate -F > /root/tmate.log 2>&1 &
 sleep 5
 grep -m 1 "ssh " /root/tmate.log | grep -v "tmate.io" > /root/tmate_ssh.txt
