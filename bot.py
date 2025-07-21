@@ -55,7 +55,7 @@ async def deploy(interaction: discord.Interaction):
         color=0x00ff00
     ).set_footer(text="https://dsc.gg/servertipacvn"))
 
-    image_url = "https://cloud-images.ubuntu.com/releases/current/arm64/ubuntu-22.04-server-cloudimg-arm64-root.tar.xz"
+    image_url = "https://cloud-images.ubuntu.com/releases/22.04/release/ubuntu-22.04-server-cloudimg-arm64-root.tar.xz"
     rootfs_path = os.path.join(user_path, "ubuntu.tar.xz")
 
     try:
