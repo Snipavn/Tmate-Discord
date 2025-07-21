@@ -55,10 +55,7 @@ async def deploy(interaction: discord.Interaction):
     rootfs_path = os.path.join(folder_name, "rootfs.tar.xz")
 
     try:
-        subprocess.run(
-            ["wget", "-O", rootfs_path, ubuntu_url],
-            check=True
-        )
+        subprocess.run(["wget", "-O", rootfs_path, ubuntu_url], check=True)
     except subprocess.CalledProcessError:
         return await interaction.followup.send("❌ Tải rootfs thất bại.", ephemeral=False)
 
@@ -75,10 +72,13 @@ tmate -F" > ssh.txt 2>&1 &
         f.write(start_sh)
     os.chmod(os.path.join(folder_name, "start.sh"), 0o755)
 
-    subprocess.run(
-        ["tar", "-xf", rootfs_path, "-C", folder_name],
-        check=True
-    )
+    try:
+        subprocess.run(
+            ["tar", "--exclude=dev/*", "-xf", rootfs_path, "-C", folder_name],
+            check=True
+        )
+    except subprocess.CalledProcessError:
+        return await interaction.followup.send("❌ Giải nén rootfs thất bại.", ephemeral=False)
 
     await interaction.followup.send(
         embed=discord.Embed(
@@ -103,7 +103,7 @@ tmate -F" > ssh.txt 2>&1 &
             ssh_msg = f.read().strip()
 
     try:
-        await interaction.user.send(f"🔐 SSH của bạn:\n```{ssh_msg}```")
+        await interaction.user.send(f"🔐 SSH của bạn:\n```{ssh_msg}```\n USER: root\n PASSWORD: servertipacvn")
     except:
         await interaction.followup.send("⚠️ Không thể gửi tin nhắn riêng. Mở DM để nhận SSH.", ephemeral=False)
 
