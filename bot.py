@@ -19,7 +19,7 @@ ALLOWED_CHANNEL_ID = 1378918272812060742
 
 MAX_VPS_PER_DAY = 2
 VPS_FOLDER = "vps_data"
-IMAGE_LINK = "https://cloud-images.ubuntu.com/releases/22.04/release/ubuntu-22.04-server-cloudimg-arm64-root.tar.xz"
+IMAGE_LINK = "https://cloud-images.ubuntu.com/releases/22.04/release/ubuntu-22.04-server-cloudimg-amd64-root.tar.xz"
 
 intents = discord.Intents.default()
 bot = commands.Bot(command_prefix="!", intents=intents)
