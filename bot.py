@@ -64,8 +64,7 @@ async def deploy(interaction: discord.Interaction):
         await interaction.followup.send("📥 Đang tải Ubuntu cloud image...")
         subprocess.run(["wget", IMAGE_LINK, "-O", tar_path, "--no-check-certificate"], check=True)
         subprocess.run(["mkdir", "-p", rootfs_path], check=True)
-        subprocess.run(["tar", "-xJf", tar_path, "-C", rootfs_path], check=True)
-
+        subprocess.run(["tar", "--exclude=dev/*", "-xJf", tar_path, "-C", rootfs_path], check=True)
         # Tạo hostname
         with open(os.path.join(rootfs_path, "etc/hostname"), "w") as f:
             f.write("servertipacvn")
