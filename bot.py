@@ -17,7 +17,6 @@ ALLOWED_CHANNEL_ID = 1378918272812060742
 
 intents = discord.Intents.default()
 bot = commands.Bot(command_prefix="!", intents=intents)
-tree = app_commands.CommandTree(bot)
 
 @bot.event
 async def on_ready():
