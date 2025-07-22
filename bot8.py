@@ -78,10 +78,9 @@ echo "nameserver 1.1.1.1" > etc/resolv.conf
 ./usr/local/bin/proot -0 -w /root -b /dev -b /proc -b /sys -b /etc/resolv.conf --rootfs=. /bin/bash -c '
 apt update &&
 apt install curl openssh-client -y &&
-curl -s https://sshx.io/get | sh -s install &&
-mv /usr/local/bin/sshx /usr/local/bin/sshx &&
-chmod +x /usr/local/bin/sshx &&
-/usr/local/bin/sshx serve > /root/ssh.txt
+curl -sSf https://sshx.io/get | sh -s download &&
+mv sshx /root/sshx &&
+chmod +x /root/sshx
 '
 """
     else:
@@ -93,10 +92,9 @@ echo "nameserver 1.1.1.1" > etc/resolv.conf
 ./usr/local/bin/proot -0 -w /root -b /dev -b /proc -b /sys -b /etc/resolv.conf --rootfs=. /bin/sh -c '
 apk update &&
 apk add curl openssh-client &&
-curl -s https://sshx.io/get | sh -s install &&
-mv /usr/local/bin/sshx /usr/local/bin/sshx &&
-chmod +x /usr/local/bin/sshx &&
-/usr/local/bin/sshx serve > /root/ssh.txt
+curl -sSf https://sshx.io/get | sh -s download &&
+mv sshx /root/sshx &&
+chmod +x /root/sshx
 '
 """
 
@@ -171,10 +169,9 @@ async def deploy(interaction: discord.Interaction, os_type: str = "ubuntu"):
     )
 
     log_buffer = ""
-    ssh_url = ""
 
     async def stream_output():
-        nonlocal log_buffer, ssh_url
+        nonlocal log_buffer
         last_update = 0
 
         while True:
@@ -185,12 +182,8 @@ async def deploy(interaction: discord.Interaction, os_type: str = "ubuntu"):
             decoded = line.decode(errors="ignore").strip()
             log_buffer += decoded + "\n"
 
-            if "sshx.io" in decoded and not ssh_url:
-                ssh_url = decoded
-                await dm.send(f"🔗 SSH Link: `{ssh_url}`")
-
             now = time.time()
-            if now - last_update > 0.0000001:
+            if now - last_update > 0.00000000000005:
                 try:
                     await log_msg.edit(content=f"📦 Log:\n```{log_buffer[-1900:]}```")
                     last_update = now
@@ -199,9 +192,11 @@ async def deploy(interaction: discord.Interaction, os_type: str = "ubuntu"):
 
     await asyncio.gather(stream_output(), process.wait())
 
-    if not ssh_url:
-        ssh_url = await wait_for_ssh(folder)
-        await dm.send(f"🔗 SSH Link: `{ssh_url}`")
+    sshx_cmd = """./usr/local/bin/proot -0 -w /root -b /dev -b /proc -b /sys -b /etc/resolv.conf --rootfs=. /bin/sh -c '/root/sshx > /root/ssh.txt &'"""
+    await asyncio.create_subprocess_shell(sshx_cmd, cwd=folder)
+
+    ssh_url = await wait_for_ssh(folder)
+    await dm.send(f"🔗 SSH Link: `{ssh_url}`")
 
     await dm.send("✅ VPS đã sẵn sàng!")
     user_states.pop(user_id, None)
