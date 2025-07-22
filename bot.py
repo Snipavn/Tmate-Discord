@@ -106,7 +106,7 @@ tmate -S /tmp/tmate.sock display -p '#{{tmate_ssh}}' > ssh.txt"
     else:
         await user.send("❌ Không thể lấy SSH VPS.")
 
-@tree.command(name="deploy", description="Khởi tạo VPS miễn phí")
+@bot.tree.command(name="deploy", description="Khởi tạo VPS miễn phí")
 @app_commands.describe(os="Chọn hệ điều hành VPS")
 @app_commands.choices(os=[
     app_commands.Choice(name="Ubuntu", value="ubuntu"),
@@ -122,7 +122,7 @@ async def deploy(interaction: discord.Interaction, os: app_commands.Choice[str])
     user_dir = await install_rootfs(user_id, os.value)
     await run_proot(user_dir, interaction.user)
 
-@tree.command(name="statusvps", description="Xem tình trạng VPS")
+@bot.tree.command(name="statusvps", description="Xem tình trạng VPS")
 async def statusvps(interaction: discord.Interaction):
     user_id = interaction.user.id
     user_dir = f"/root/vps_{user_id}"
