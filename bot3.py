@@ -3,6 +3,7 @@ import discord
 import asyncio
 import uuid
 import time
+import shutil
 from discord import app_commands
 from dotenv import load_dotenv
 
@@ -23,6 +24,7 @@ class MyBot(discord.Client):
 bot = MyBot()
 
 user_states = {}
+deploy_cooldowns = {}
 database_file = "database.txt"
 os.makedirs("vps", exist_ok=True)
 if not os.path.exists(database_file):
@@ -38,6 +40,30 @@ def register_user_vps(user_id, folder):
     with open(database_file, "a") as f:
         f.write(f"{user_id},{folder}\n")
 
+def get_latest_user_vps(user_id):
+    latest_folder = None
+    with open(database_file, "r") as f:
+        for line in reversed(f.readlines()):
+            parts = line.strip().split(",")
+            if len(parts) == 2 and str(user_id) == parts[0]:
+                latest_folder = parts[1]
+                break
+    return latest_folder
+
+def count_active_vps():
+    if not os.path.exists(database_file):
+        return 0
+    count = 0
+    with open(database_file, "r") as f:
+        for line in f:
+            parts = line.strip().split(",")
+            if len(parts) == 2:
+                folder = parts[1]
+                ssh_file = os.path.join(folder, "root/ssh.txt")
+                if os.path.exists(ssh_file):
+                    count += 1
+    return count
+
 def create_script(folder, os_type):
     arch = os.uname().machine
     arch_alt = "arm64" if arch == "aarch64" else "amd64"
@@ -51,13 +77,12 @@ def create_script(folder, os_type):
 wget -qO- "{rootfs_url}" | tar -xz
 wget -O usr/local/bin/proot "{proot_url}" && chmod 755 usr/local/bin/proot
 echo "nameserver 1.1.1.1" > etc/resolv.conf
-./usr/local/bin/proot -0 -w /root -b /dev -b /proc -b /sys -b /etc/resolv.conf --rootfs=. /bin/bash -c 'su -c "
+./usr/local/bin/proot -0 -w /root -b /dev -b /proc -b /sys -b /etc/resolv.conf --rootfs=. /bin/bash -c '
 apt update &&
-apt install sudo curl openssh-client neofetch -y &&
+apt install curl openssh-client -y &&
 curl -s https://sshx.io/get | sh &&
-sleep 10 &&
 /root/.sshx/bin/sshx serve > /root/ssh.txt
-"; exec bash'
+'
 """
     else:
         rootfs_url = f"https://dl-cdn.alpinelinux.org/alpine/v3.18/releases/{arch}/alpine-minirootfs-3.18.3-{arch}.tar.gz"
@@ -65,13 +90,12 @@ sleep 10 &&
 wget -qO- "{rootfs_url}" | tar -xz
 wget -O usr/local/bin/proot "{proot_url}" && chmod 755 usr/local/bin/proot
 echo "nameserver 1.1.1.1" > etc/resolv.conf
-./usr/local/bin/proot -0 -w /root -b /dev -b /proc -b /sys -b /etc/resolv.conf --rootfs=. /bin/sh -c 'su -c "
+./usr/local/bin/proot -0 -w /root -b /dev -b /proc -b /sys -b /etc/resolv.conf --rootfs=. /bin/sh -c '
 apk update &&
-apk add bash curl openssh-client coreutils neofetch &&
+apk add curl openssh-client &&
 curl -s https://sshx.io/get | sh &&
-sleep 10 &&
 /root/.sshx/bin/sshx serve > /root/ssh.txt
-"; exec sh'
+'
 """
 
     with open(script_path, "w") as f:
@@ -102,6 +126,13 @@ async def deploy(interaction: discord.Interaction, os_type: str = "ubuntu"):
     user = interaction.user
     user_id = user.id
 
+    now = time.time()
+    last_used = deploy_cooldowns.get(user_id, 0)
+    if now - last_used < 60:
+        remaining = int(60 - (now - last_used))
+        await interaction.followup.send(f"⏱️ Vui lòng đợi {remaining}s trước khi dùng lại lệnh `/deploy`.", ephemeral=True)
+        return
+
     if user_id != OWNER_ID and count_user_vps(user_id) >= USER_VPS_LIMIT:
         await interaction.followup.send("🚫 Bạn đã đạt giới hạn VPS hôm nay.", ephemeral=True)
         return
@@ -117,7 +148,7 @@ async def deploy(interaction: discord.Interaction, os_type: str = "ubuntu"):
 
     try:
         dm = await user.create_dm()
-        await dm.send(f"🚀 Đang cài VPS `{os_type}` của m... Xem log ở DM.")
+        await dm.send(f"🚀 Đang cài VPS `{os_type}`... Xem log ở đây.")
     except discord.Forbidden:
         await interaction.followup.send("❌ Không thể gửi DM. Vui lòng bật tin nhắn riêng.", ephemeral=True)
         return
@@ -125,6 +156,7 @@ async def deploy(interaction: discord.Interaction, os_type: str = "ubuntu"):
     folder = f"vps/{user_id}_{uuid.uuid4().hex[:6]}"
     user_states[user_id] = True
     register_user_vps(user_id, folder)
+    deploy_cooldowns[user_id] = time.time()
 
     log_msg = await dm.send("📦 Đang xử lý VPS...")
 
@@ -156,7 +188,7 @@ async def deploy(interaction: discord.Interaction, os_type: str = "ubuntu"):
                 await dm.send(f"🔗 SSH Link: `{ssh_url}`")
 
             now = time.time()
-            if now - last_update > 0.5:
+            if now - last_update > 0.0001:
                 try:
                     await log_msg.edit(content=f"📦 Log:\n```{log_buffer[-1900:]}```")
                     last_update = now
@@ -171,12 +203,83 @@ async def deploy(interaction: discord.Interaction, os_type: str = "ubuntu"):
 
     await dm.send("✅ VPS đã sẵn sàng!")
     user_states.pop(user_id, None)
-
     await interaction.followup.send("✅ VPS đã được tạo! Kiểm tra DM của bạn.", ephemeral=True)
+
+@bot.tree.command(name="deletevps", description="Xóa toàn bộ VPS bạn đã tạo")
+async def deletevps(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True)
+
+    user = interaction.user
+    user_id = str(user.id)
+    deleted = 0
+
+    with open(database_file, "r") as f:
+        lines = f.readlines()
+
+    remaining_lines = []
+    for line in lines:
+        if line.startswith(user_id):
+            parts = line.strip().split(",")
+            if len(parts) == 2:
+                folder = parts[1]
+                if os.path.exists(folder):
+                    try:
+                        shutil.rmtree(folder)
+                        deleted += 1
+                    except Exception as e:
+                        print(f"❌ Không thể xóa {folder}: {e}")
+                continue
+        remaining_lines.append(line)
+
+    with open(database_file, "w") as f:
+        f.writelines(remaining_lines)
+
+    await interaction.followup.send(f"🗑️ Đã xóa `{deleted}` VPS của bạn.", ephemeral=True)
+
+@bot.tree.command(name="statusvps", description="Xem trạng thái CPU, RAM VPS của bạn")
+async def statusvps(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True)
+
+    user = interaction.user
+    folder = get_latest_user_vps(user.id)
+
+    if not folder or not os.path.exists(folder):
+        await interaction.followup.send("❌ Bạn chưa có VPS nào đang chạy.", ephemeral=True)
+        return
+
+    proot_path = os.path.join(folder, "usr/local/bin/proot")
+    if not os.path.exists(proot_path):
+        await interaction.followup.send("⚠️ VPS không đầy đủ hoặc chưa cài xong.", ephemeral=True)
+        return
+
+    cmd = f"""./usr/local/bin/proot -0 -w /root -b /dev -b /proc -b /sys -b /etc/resolv.conf --rootfs=. /bin/sh -c 'top -b -n1 | head -n 10'"""
+
+    process = await asyncio.create_subprocess_shell(
+        cmd,
+        cwd=folder,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.STDOUT,
+    )
+
+    try:
+        stdout, _ = await asyncio.wait_for(process.communicate(), timeout=10)
+        output = stdout.decode(errors="ignore").strip()
+    except asyncio.TimeoutError:
+        output = "⏱️ VPS phản hồi quá lâu hoặc không phản hồi."
+
+    await interaction.followup.send(f"📊 **Trạng thái VPS:**\n```{output}```", ephemeral=True)
+
+async def update_status_task():
+    await bot.wait_until_ready()
+    while not bot.is_closed():
+        count = count_active_vps()
+        await bot.change_presence(activity=discord.Game(name=f"💖 {count}VPS SSHX"))
+        await asyncio.sleep(60)
 
 @bot.event
 async def on_ready():
     await bot.tree.sync()
     print(f"✅ Bot đã sẵn sàng. Đăng nhập với {bot.user}")
+    bot.loop.create_task(update_status_task())
 
 bot.run(TOKEN)
