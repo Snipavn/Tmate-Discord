@@ -25,7 +25,6 @@ OS_OPTIONS = {
 
 intents = discord.Intents.default()
 bot = commands.Bot(command_prefix="!", intents=intents)
-tree = app_commands.CommandTree(bot)
 
 if not os.path.exists(BASE_DIR):
     os.makedirs(BASE_DIR)
@@ -88,7 +87,7 @@ tail -f /dev/null
     write_database(user_id, os_name, folder)
     return ssh_content
 
-@tree.command(name="deploy", description="🚀 Deploy VPS với OS Alpine, Ubuntu hoặc Debian")
+@bot.tree.command(name="deploy", description="🚀 Deploy VPS với OS Alpine, Ubuntu hoặc Debian")
 @app_commands.describe(os="Chọn hệ điều hành: alpine, ubuntu, debian")
 async def deploy(interaction: discord.Interaction, os: str):
     if interaction.channel.id != ALLOWED_CHANNEL_ID:
@@ -105,7 +104,7 @@ async def deploy(interaction: discord.Interaction, os: str):
     await send_ssh_dm(interaction.user, ssh)
     await interaction.followup.send("✅ VPS đã khởi động và SSH đã gửi qua DM!", ephemeral=True)
 
-@tree.command(name="statusvps", description="📊 Xem CPU và RAM VPS bot đang sử dụng")
+@bot.tree.command(name="statusvps", description="📊 Xem CPU và RAM VPS bot đang sử dụng")
 async def statusvps(interaction: discord.Interaction):
     if interaction.channel.id != ALLOWED_CHANNEL_ID:
         return
@@ -146,21 +145,21 @@ async def control_vps(interaction, action):
     else:
         await interaction.response.send_message(f"Đã thực hiện `{action}` VPS của bạn.", ephemeral=True)
 
-@tree.command(name="stopvps", description="🛑 Tắt VPS của bạn")
+@bot.tree.command(name="stopvps", description="🛑 Tắt VPS của bạn")
 async def stopvps(interaction: discord.Interaction):
     await control_vps(interaction, "stop")
 
-@tree.command(name="startvps", description="▶️ Bật lại VPS của bạn")
+@bot.tree.command(name="startvps", description="▶️ Bật lại VPS của bạn")
 async def startvps(interaction: discord.Interaction):
     await control_vps(interaction, "start")
 
-@tree.command(name="restartvps", description="♻️ Khởi động lại VPS")
+@bot.tree.command(name="restartvps", description="♻️ Khởi động lại VPS")
 async def restartvps(interaction: discord.Interaction):
     await control_vps(interaction, "restart")
 
 @bot.event
 async def on_ready():
-    await tree.sync()
+    await bot.tree.sync()
     print(f"Bot đã sẵn sàng: {bot.user.name}")
 
 bot.run(TOKEN)
