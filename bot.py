@@ -17,7 +17,6 @@ ALLOWED_CHANNEL_ID = 1378918272812060742
 
 intents = discord.Intents.default()
 bot = commands.Bot(command_prefix="!", intents=intents)
-tree = app_commands.CommandTree(bot)
 
 OS_OPTIONS = {
     "alpine": "https://dl-cdn.alpinelinux.org/alpine/v3.19/releases/aarch64/alpine-minirootfs-3.19.1-aarch64.tar.gz",
@@ -96,7 +95,7 @@ async def run_proot(user_dir, user, os_name):
     except:
         pass
 
-@tree.command(name="deploy", description="Khởi tạo VPS bằng proot")
+@bot.tree.command(name="deploy", description="Khởi tạo VPS bằng proot")
 @app_commands.describe(os_name="Chọn hệ điều hành để deploy")
 @app_commands.choices(os_name=[
     app_commands.Choice(name="🧊 Alpine", value="alpine"),
@@ -147,7 +146,7 @@ async def on_interaction(interaction: discord.Interaction):
             await run_proot(user_dir, interaction.user, "alpine")
             await interaction.response.send_message("🚀 VPS đã được khởi động.", ephemeral=True)
 
-@tree.command(name="statusvps", description="Xem trạng thái VPS")
+@bot.tree.command(name="statusvps", description="Xem trạng thái VPS")
 async def status(interaction: discord.Interaction):
     cpu = psutil.cpu_percent(interval=1)
     ram = psutil.virtual_memory().percent
@@ -162,7 +161,7 @@ async def status(interaction: discord.Interaction):
 
 @bot.event
 async def on_ready():
-    await tree.sync()
+    await bot.tree.sync()
     print(f"Bot đã đăng nhập: {bot.user}")
 
 bot.run(TOKEN)
