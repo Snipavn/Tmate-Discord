@@ -77,28 +77,33 @@ async def install_rootfs(user_id: int, os_choice: str):
     return user_dir
 
 async def run_proot(user_dir: str, user: discord.User, os_choice: str):
-    # Nội dung script tùy theo OS
     script_content = {
         "alpine": """#!/bin/sh
+echo "root@servertipacvn" > /etc/hostname
 apk update
 apk add openssh tmate
 tmate -S /tmp/tmate.sock new-session -d
 tmate -S /tmp/tmate.sock wait tmate-ready
 tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}' > /root/ssh.txt
+tail -f /dev/null
 """,
         "ubuntu": """#!/bin/sh
+echo "root@servertipacvn" > /etc/hostname
 apt update
 apt install -y openssh-client tmate
 tmate -S /tmp/tmate.sock new-session -d
 tmate -S /tmp/tmate.sock wait tmate-ready
 tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}' > /root/ssh.txt
+tail -f /dev/null
 """,
         "debian": """#!/bin/sh
+echo "root@servertipacvn" > /etc/hostname
 apt update
 apt install -y openssh-client tmate
 tmate -S /tmp/tmate.sock new-session -d
 tmate -S /tmp/tmate.sock wait tmate-ready
 tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}' > /root/ssh.txt
+tail -f /dev/null
 """
     }[os_choice]
 
@@ -106,12 +111,10 @@ tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}' > /root/ssh.txt
     script_path_host = os.path.join(user_dir, script_name)
     script_path_inside = f"/root/{script_name}"
 
-    # Ghi script ra host
     with open(script_path_host, "w") as f:
         f.write(script_content)
     os.chmod(script_path_host, 0o755)
 
-    # Tạo lệnh proot và bind script vào bên trong rootfs
     proot_cmd = f"""{user_dir}/usr/local/bin/proot \\
 --rootfs={user_dir} -0 -w /root \\
 -b /dev -b /sys -b /proc -b /etc/resolv.conf \\
@@ -125,13 +128,13 @@ tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}' > /root/ssh.txt
     os.chmod(run_path, 0o755)
 
     proc = await asyncio.create_subprocess_shell(f"bash run.sh", cwd=user_dir)
-    await proc.wait()
+    await asyncio.sleep(10)
 
     ssh_path = os.path.join(user_dir, "root/ssh.txt")
     if os.path.exists(ssh_path):
         with open(ssh_path) as f:
             ssh = f.read().strip()
-        await user.send(f"🔑 SSH VPS của bạn:\n```{ssh}```")
+        await user.send(f"🔑 **SSH VPS của bạn:**\n```{ssh}```")
     else:
         await user.send("❌ Không thể lấy SSH VPS.")
 
@@ -153,9 +156,6 @@ async def deploy(interaction: discord.Interaction, os: app_commands.Choice[str])
 
 @bot.tree.command(name="statusvps", description="Xem tình trạng VPS")
 async def statusvps(interaction: discord.Interaction):
-    user_id = interaction.user.id
-    user_dir = f"/root/vps_{user_id}"
-
     embed = discord.Embed(title="📊 Trạng thái VPS", color=0x00ff00)
     embed.add_field(name="CPU Usage", value=f"{psutil.cpu_percent()}%", inline=True)
     embed.add_field(name="RAM Usage", value=f"{psutil.virtual_memory().percent}%", inline=True)
@@ -165,22 +165,34 @@ async def statusvps(interaction: discord.Interaction):
     for name in ["start", "stop", "restart"]:
         view.add_item(discord.ui.Button(label=f"{name.capitalize()} VPS", style=discord.ButtonStyle.primary, custom_id=name))
 
-    await interaction.response.send_message(embed=embed, view=view, ephemeral=False)
+    await interaction.response.send_message(embed=embed, view=view)
 
 @bot.event
 async def on_interaction(interaction: discord.Interaction):
     if interaction.type.name == "component":
         user_id = interaction.user.id
         user_dir = f"/root/vps_{user_id}"
-        if interaction.data["custom_id"] == "start":
+
+        def kill_vps():
+            for proc in psutil.process_iter(['pid', 'cmdline']):
+                try:
+                    cmd = " ".join(proc.info['cmdline'])
+                    if user_dir in cmd:
+                        proc.kill()
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    pass
+
+        action = interaction.data["custom_id"]
+        if action == "start":
             await run_proot(user_dir, interaction.user, "alpine")
-            await interaction.response.send_message("✅ VPS đã được khởi động lại.", ephemeral=True)
-        elif interaction.data["custom_id"] == "stop":
-            subprocess.run(["pkill", "-f", f"vps_{user_id}"])
-            await interaction.response.send_message("🛑 VPS đã được dừng.", ephemeral=True)
-        elif interaction.data["custom_id"] == "restart":
-            subprocess.run(["pkill", "-f", f"vps_{user_id}"])
+            await interaction.response.send_message("✅ VPS đã được khởi động lại.", ephemeral=False)
+        elif action == "stop":
+            kill_vps()
+            await interaction.response.send_message("🛑 VPS đã được dừng.", ephemeral=False)
+        elif action == "restart":
+            kill_vps()
+            await asyncio.sleep(2)
             await run_proot(user_dir, interaction.user, "alpine")
-            await interaction.response.send_message("🔁 VPS đã khởi động lại.", ephemeral=True)
+            await interaction.response.send_message("🔁 VPS đã khởi động lại.", ephemeral=False)
 
 bot.run(TOKEN)
