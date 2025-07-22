@@ -5,7 +5,7 @@ import uuid
 from discord import app_commands
 from dotenv import load_dotenv
 
-# Load biến môi trường từ file .env
+# Load biến môi trường
 load_dotenv()
 TOKEN = os.getenv("TOKEN")
 
@@ -54,7 +54,8 @@ echo "nameserver 1.1.1.1" > etc/resolv.conf
 apt update &&
 apt install sudo curl openssh-client neofetch -y &&
 curl -s https://sshx.io/get | sh &&
-~/.sshx/bin/sshx serve > /root/ssh.txt &
+sleep 10 &&
+/root/.sshx/bin/sshx serve > /root/ssh.txt
 "; exec bash'
 """
     else:
@@ -67,9 +68,11 @@ echo "nameserver 1.1.1.1" > etc/resolv.conf
 apk update &&
 apk add bash curl openssh-client coreutils neofetch &&
 curl -s https://sshx.io/get | sh &&
-~/.sshx/bin/sshx serve > /root/ssh.txt &
+sleep 10 &&
+/root/.sshx/bin/sshx serve > /root/ssh.txt
 "; exec sh'
 """
+
     with open(script_path, "w") as f:
         f.write(f"""#!/bin/bash
 cd "$(dirname "$0")"
@@ -92,29 +95,30 @@ async def deploy(interaction: discord.Interaction, os_type: str = "ubuntu"):
     await interaction.response.defer(thinking=True)
 
     if interaction.channel.id != ALLOWED_CHANNEL_ID:
-        await interaction.followup.send("❌ Bạn không thể dùng lệnh này ở đây.")
+        await interaction.followup.send("❌ Bạn không thể dùng lệnh này ở đây.", ephemeral=True)
         return
 
     user_id = interaction.user.id
 
     if user_id != OWNER_ID and count_user_vps(user_id) >= USER_VPS_LIMIT:
-        await interaction.followup.send("🚫 Bạn đã đạt giới hạn VPS hôm nay.")
+        await interaction.followup.send("🚫 Bạn đã đạt giới hạn VPS hôm nay.", ephemeral=True)
         return
 
     if user_id in user_states:
-        await interaction.followup.send("⚠️ Bạn đang deploy VPS khác, vui lòng đợi.")
+        await interaction.followup.send("⚠️ Bạn đang deploy VPS khác, vui lòng đợi.", ephemeral=True)
         return
 
     os_type = os_type.lower()
     if os_type not in ["ubuntu", "alpine"]:
-        await interaction.followup.send("❌ OS không hợp lệ. Dùng `ubuntu` hoặc `alpine`.")
+        await interaction.followup.send("❌ OS không hợp lệ. Dùng `ubuntu` hoặc `alpine`.", ephemeral=True)
         return
 
     folder = f"vps/{user_id}_{uuid.uuid4().hex[:6]}"
     user_states[user_id] = True
     register_user_vps(user_id, folder)
 
-    await interaction.followup.send(f"🚀 Đang khởi tạo VPS `{os_type}` cho {interaction.user.mention}...")
+    await interaction.followup.send(f"🚀 Đang cài VPS `{os_type}`...", ephemeral=True)
+    log_message = await interaction.followup.send("📦 Đang xử lý VPS...", ephemeral=True)
 
     create_script(folder, os_type)
     process = await asyncio.create_subprocess_shell(
@@ -128,7 +132,7 @@ async def deploy(interaction: discord.Interaction, os_type: str = "ubuntu"):
     ssh_url = ""
 
     async def stream_output():
-        nonlocal log_buffer, ssh_url
+        nonlocal log_buffer, ssh_url, log_message
         while True:
             line = await process.stdout.readline()
             if not line:
@@ -138,22 +142,19 @@ async def deploy(interaction: discord.Interaction, os_type: str = "ubuntu"):
 
             if "sshx.io" in decoded and not ssh_url:
                 ssh_url = decoded
-                await interaction.followup.send(f"🔗 SSH Link: `{ssh_url}`")
+                await interaction.followup.send(f"🔗 SSH Link: `{ssh_url}`", ephemeral=True)
 
-            if log_buffer.count("\n") >= 5:
-                await interaction.followup.send(f"```\n{log_buffer}```")
-                log_buffer = ""
-
-        if log_buffer:
-            await interaction.followup.send(f"```\n{log_buffer}```")
+            # Cập nhật log mỗi 3s
+            await log_message.edit(content=f"📦 Log:\n```{log_buffer[-1900:]}```")
+            await asyncio.sleep(3)
 
     await asyncio.gather(stream_output(), process.wait())
 
     if not ssh_url:
         ssh_url = await wait_for_ssh(folder)
-        await interaction.followup.send(f"🔗 SSH Link: `{ssh_url}`")
+        await interaction.followup.send(f"🔗 SSH Link: `{ssh_url}`", ephemeral=True)
 
-    await interaction.followup.send("✅ VPS đã sẵn sàng!")
+    await interaction.followup.send("✅ VPS đã sẵn sàng!", ephemeral=True)
     user_states.pop(user_id, None)
 
 @bot.event
