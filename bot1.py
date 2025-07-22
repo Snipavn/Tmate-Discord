@@ -2,18 +2,24 @@ import os
 import discord
 import asyncio
 import uuid
-from discord.ext import commands
+from discord import app_commands
 from dotenv import load_dotenv
 
 # Load biến môi trường từ file .env
 load_dotenv()
 TOKEN = os.getenv("TOKEN")
 
-OWNER_ID = 882844895902040104  # ID chủ bot
-ALLOWED_CHANNEL_ID = 1378918272812060742  # Chỉ cho phép deploy ở kênh này
+OWNER_ID = 882844895902040104
+ALLOWED_CHANNEL_ID = 1378918272812060742
 
 intents = discord.Intents.default()
-bot = commands.Bot(command_prefix="!", intents=intents)
+
+class MyBot(discord.Client):
+    def __init__(self):
+        super().__init__(intents=intents)
+        self.tree = app_commands.CommandTree(self)
+
+bot = MyBot()
 
 user_states = {}
 database_file = "database.txt"
@@ -80,30 +86,35 @@ async def wait_for_ssh(folder):
         await asyncio.sleep(2)
     return "❌ Không tìm thấy SSH Link sau 2 phút."
 
-@bot.command()
-async def deploy(ctx, os_type: str = "ubuntu"):
-    if ctx.channel.id != ALLOWED_CHANNEL_ID:
-        await ctx.send("❌ Bạn không thể dùng lệnh này ở đây.")
+@bot.tree.command(name="deploy", description="Khởi tạo VPS dùng sshx.io")
+@app_commands.describe(os_type="Hệ điều hành muốn dùng: ubuntu hoặc alpine")
+async def deploy(interaction: discord.Interaction, os_type: str = "ubuntu"):
+    await interaction.response.defer(thinking=True)
+
+    if interaction.channel.id != ALLOWED_CHANNEL_ID:
+        await interaction.followup.send("❌ Bạn không thể dùng lệnh này ở đây.")
         return
 
-    if ctx.author.id != OWNER_ID and count_user_vps(ctx.author.id) >= USER_VPS_LIMIT:
-        await ctx.send("🚫 Bạn đã đạt giới hạn VPS hôm nay.")
+    user_id = interaction.user.id
+
+    if user_id != OWNER_ID and count_user_vps(user_id) >= USER_VPS_LIMIT:
+        await interaction.followup.send("🚫 Bạn đã đạt giới hạn VPS hôm nay.")
         return
 
-    if ctx.author.id in user_states:
-        await ctx.send("⚠️ Bạn đang deploy VPS khác, vui lòng đợi.")
+    if user_id in user_states:
+        await interaction.followup.send("⚠️ Bạn đang deploy VPS khác, vui lòng đợi.")
         return
 
     os_type = os_type.lower()
     if os_type not in ["ubuntu", "alpine"]:
-        await ctx.send("❌ OS không hợp lệ. Dùng `ubuntu` hoặc `alpine`.")
+        await interaction.followup.send("❌ OS không hợp lệ. Dùng `ubuntu` hoặc `alpine`.")
         return
 
-    folder = f"vps/{ctx.author.id}_{uuid.uuid4().hex[:6]}"
-    user_states[ctx.author.id] = True
-    register_user_vps(ctx.author.id, folder)
+    folder = f"vps/{user_id}_{uuid.uuid4().hex[:6]}"
+    user_states[user_id] = True
+    register_user_vps(user_id, folder)
 
-    await ctx.send(f"🚀 Đang khởi tạo VPS `{os_type}` cho {ctx.author.mention}...")
+    await interaction.followup.send(f"🚀 Đang khởi tạo VPS `{os_type}` cho {interaction.user.mention}...")
 
     create_script(folder, os_type)
     process = await asyncio.create_subprocess_shell(
@@ -127,26 +138,27 @@ async def deploy(ctx, os_type: str = "ubuntu"):
 
             if "sshx.io" in decoded and not ssh_url:
                 ssh_url = decoded
-                await ctx.send(f"🔗 SSH Link: `{ssh_url}`")
+                await interaction.followup.send(f"🔗 SSH Link: `{ssh_url}`")
 
             if log_buffer.count("\n") >= 5:
-                await ctx.send(f"```\n{log_buffer}```")
+                await interaction.followup.send(f"```\n{log_buffer}```")
                 log_buffer = ""
 
         if log_buffer:
-            await ctx.send(f"```\n{log_buffer}```")
+            await interaction.followup.send(f"```\n{log_buffer}```")
 
     await asyncio.gather(stream_output(), process.wait())
 
     if not ssh_url:
         ssh_url = await wait_for_ssh(folder)
-        await ctx.send(f"🔗 SSH Link: `{ssh_url}`")
+        await interaction.followup.send(f"🔗 SSH Link: `{ssh_url}`")
 
-    await ctx.send("✅ VPS đã sẵn sàng!")
-    user_states.pop(ctx.author.id, None)
+    await interaction.followup.send("✅ VPS đã sẵn sàng!")
+    user_states.pop(user_id, None)
 
 @bot.event
 async def on_ready():
+    await bot.tree.sync()
     print(f"✅ Bot đã sẵn sàng. Đăng nhập với {bot.user}")
 
 bot.run(TOKEN)
