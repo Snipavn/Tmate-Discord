@@ -1,3 +1,4 @@
+# bot_vps.py
 import os
 import discord
 import asyncio
@@ -7,7 +8,6 @@ import shutil
 from discord import app_commands
 from dotenv import load_dotenv
 
-# Load biến môi trường
 load_dotenv()
 TOKEN = os.getenv("TOKEN")
 
@@ -73,29 +73,40 @@ def create_script(folder, os_type):
 
     if os_type == "ubuntu":
         rootfs_url = f"http://cdimage.ubuntu.com/ubuntu-base/releases/20.04/release/ubuntu-base-20.04.4-base-{arch_alt}.tar.gz"
-        commands = f"""
-wget -qO- "{rootfs_url}" | tar -xz
-wget -O usr/local/bin/proot "{proot_url}" && chmod 755 usr/local/bin/proot
-echo "nameserver 1.1.1.1" > etc/resolv.conf
-./usr/local/bin/proot -0 -w /root -b /dev -b /proc -b /sys -b /etc/resolv.conf --rootfs=. /bin/bash -c '
+        shell = "/bin/bash"
+        installer = """
 apt update &&
-apt install curl openssh-client -y &&
-curl -s https://sshx.io/get | sh &&
-/root/.sshx/bin/sshx serve > /root/ssh.txt
-'
+apt install curl openssh-client findutils -y &&
+curl -s https://sshx.io/get | sh > /root/sshx_install.log 2>&1 &&
+SSHX_PATH=$(find /root -type f -name sshx | head -n 1) &&
+if [ -x "$SSHX_PATH" ]; then
+  "$SSHX_PATH" serve | tee /root/ssh.txt
+else
+  echo "❌ sshx không được cài hoặc không tìm thấy file sshx." > /root/ssh.txt
+  cat /root/sshx_install.log >> /root/ssh.txt
+fi
 """
     else:
         rootfs_url = f"https://dl-cdn.alpinelinux.org/alpine/v3.18/releases/{arch}/alpine-minirootfs-3.18.3-{arch}.tar.gz"
-        commands = f"""
+        shell = "/bin/sh"
+        installer = """
+apk update &&
+apk add curl openssh-client findutils &&
+curl -s https://sshx.io/get | sh > /root/sshx_install.log 2>&1 &&
+SSHX_PATH=$(find /root -type f -name sshx | head -n 1) &&
+if [ -x "$SSHX_PATH" ]; then
+  "$SSHX_PATH" serve | tee /root/ssh.txt
+else
+  echo "❌ sshx không được cài hoặc không tìm thấy file sshx." > /root/ssh.txt
+  cat /root/sshx_install.log >> /root/ssh.txt
+fi
+"""
+
+    commands = f"""
 wget -qO- "{rootfs_url}" | tar -xz
 wget -O usr/local/bin/proot "{proot_url}" && chmod 755 usr/local/bin/proot
 echo "nameserver 1.1.1.1" > etc/resolv.conf
-./usr/local/bin/proot -0 -w /root -b /dev -b /proc -b /sys -b /etc/resolv.conf --rootfs=. /bin/sh -c '
-apk update &&
-apk add curl openssh-client &&
-curl -s https://sshx.io/get | sh &&
-/root/.sshx/bin/sshx serve > /root/ssh.txt
-'
+./usr/local/bin/proot -0 -w /root -b /dev -b /proc -b /sys -b /etc/resolv.conf --rootfs=. {shell} -c '{installer}'
 """
 
     with open(script_path, "w") as f:
@@ -188,7 +199,7 @@ async def deploy(interaction: discord.Interaction, os_type: str = "ubuntu"):
                 await dm.send(f"🔗 SSH Link: `{ssh_url}`")
 
             now = time.time()
-            if now - last_update > 0.0001:
+            if now - last_update > 0.00001:
                 try:
                     await log_msg.edit(content=f"📦 Log:\n```{log_buffer[-1900:]}```")
                     last_update = now
@@ -273,7 +284,7 @@ async def update_status_task():
     await bot.wait_until_ready()
     while not bot.is_closed():
         count = count_active_vps()
-        await bot.change_presence(activity=discord.Game(name=f"💖 {count}VPS SSHX"))
+        await bot.change_presence(activity=discord.Game(name=f"💖 {count} VPS SSHX"))
         await asyncio.sleep(60)
 
 @bot.event
