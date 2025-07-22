@@ -44,11 +44,6 @@ async def install_rootfs(user_id: int, os_choice: str):
     if os_choice == "debian":
         url = f"https://github.com/termux/proot-distro/releases/download/v3.10.0/debian-{arch}-pd-v3.10.0.tar.xz"
         subprocess.run(["wget", "-O", "rootfs.tar.xz", url])
-        subprocess.run(["apt", "download", "xz-utils"])
-        deb_file = next((f for f in os.listdir() if f.endswith(".deb")), None)
-        if deb_file:
-            subprocess.run(["dpkg", "-x", deb_file, "/root/.local/"])
-            os.remove(deb_file)
         subprocess.run(["tar", "-xJf", "rootfs.tar.xz", "-C", user_dir, "--exclude=dev/*"])
     elif os_choice == "ubuntu":
         url = f"http://cdimage.ubuntu.com/ubuntu-base/releases/20.04/release/ubuntu-base-20.04.4-base-{arch_alt}.tar.gz"
@@ -81,24 +76,55 @@ async def install_rootfs(user_id: int, os_choice: str):
 
     return user_dir
 
-async def run_proot(user_dir: str, user: discord.User):
-    start_cmd = f"""{user_dir}/usr/local/bin/proot \
---rootfs={user_dir} -0 -w /root \
--b /dev -b /sys -b /proc -b /etc/resolv.conf \
---kill-on-exit /bin/sh -c "apk update && apk add openssh tmate || apt update && apt install -y openssh-client tmate; \
-tmate -S /tmp/tmate.sock new-session -d && \
-tmate -S /tmp/tmate.sock wait tmate-ready && \
-tmate -S /tmp/tmate.sock display -p '#{{tmate_ssh}}' > ssh.txt"
+async def run_proot(user_dir: str, user: discord.User, os_choice: str):
+    # Tạo script tương ứng với OS
+    script_content = {
+        "alpine": """#!/bin/sh
+apk update
+apk add openssh tmate
+tmate -S /tmp/tmate.sock new-session -d
+tmate -S /tmp/tmate.sock wait tmate-ready
+tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}' > /root/ssh.txt
+""",
+        "ubuntu": """#!/bin/sh
+apt update
+apt install -y openssh-client tmate
+tmate -S /tmp/tmate.sock new-session -d
+tmate -S /tmp/tmate.sock wait tmate-ready
+tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}' > /root/ssh.txt
+""",
+        "debian": """#!/bin/sh
+apt update
+apt install -y openssh-client tmate
+tmate -S /tmp/tmate.sock new-session -d
+tmate -S /tmp/tmate.sock wait tmate-ready
+tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}' > /root/ssh.txt
 """
-    script_file = f"{user_dir}/start_vps.sh"
-    with open(script_file, "w") as f:
-        f.write(start_cmd)
-    os.chmod(script_file, 0o755)
+    }[os_choice]
 
-    proc = await asyncio.create_subprocess_shell(f"bash {script_file}", cwd=user_dir)
+    script_name = f"start_{os_choice}.sh"
+    script_path_host = os.path.join(user_dir, script_name)
+    script_path_inside = f"/root/{script_name}"
+
+    with open(script_path_host, "w") as f:
+        f.write(script_content)
+    os.chmod(script_path_host, 0o755)
+
+    proot_cmd = f"""{user_dir}/usr/local/bin/proot \\
+--rootfs={user_dir} -0 -w /root \\
+-b /dev -b /sys -b /proc -b /etc/resolv.conf \\
+--kill-on-exit /bin/sh {script_path_inside}
+"""
+
+    run_path = os.path.join(user_dir, "run.sh")
+    with open(run_path, "w") as f:
+        f.write(proot_cmd)
+    os.chmod(run_path, 0o755)
+
+    proc = await asyncio.create_subprocess_shell(f"bash run.sh", cwd=user_dir)
     await proc.wait()
 
-    ssh_path = os.path.join(user_dir, "ssh.txt")
+    ssh_path = os.path.join(user_dir, "root/ssh.txt")
     if os.path.exists(ssh_path):
         with open(ssh_path) as f:
             ssh = f.read().strip()
@@ -120,13 +146,12 @@ async def deploy(interaction: discord.Interaction, os: app_commands.Choice[str])
     await interaction.response.send_message("🚀 Đang khởi tạo VPS...")
     user_id = interaction.user.id
     user_dir = await install_rootfs(user_id, os.value)
-    await run_proot(user_dir, interaction.user)
+    await run_proot(user_dir, interaction.user, os.value)
 
 @bot.tree.command(name="statusvps", description="Xem tình trạng VPS")
 async def statusvps(interaction: discord.Interaction):
     user_id = interaction.user.id
     user_dir = f"/root/vps_{user_id}"
-    vps_running = "start_vps.sh" in os.listdir(user_dir)
 
     embed = discord.Embed(title="📊 Trạng thái VPS", color=0x00ff00)
     embed.add_field(name="CPU Usage", value=f"{psutil.cpu_percent()}%", inline=True)
@@ -145,14 +170,14 @@ async def on_interaction(interaction: discord.Interaction):
         user_id = interaction.user.id
         user_dir = f"/root/vps_{user_id}"
         if interaction.data["custom_id"] == "start":
-            await run_proot(user_dir, interaction.user)
+            await run_proot(user_dir, interaction.user, "alpine")
             await interaction.response.send_message("✅ VPS đã được khởi động lại.", ephemeral=True)
         elif interaction.data["custom_id"] == "stop":
             subprocess.run(["pkill", "-f", f"vps_{user_id}"])
             await interaction.response.send_message("🛑 VPS đã được dừng.", ephemeral=True)
         elif interaction.data["custom_id"] == "restart":
             subprocess.run(["pkill", "-f", f"vps_{user_id}"])
-            await run_proot(user_dir, interaction.user)
+            await run_proot(user_dir, interaction.user, "alpine")
             await interaction.response.send_message("🔁 VPS đã khởi động lại.", ephemeral=True)
 
 bot.run(TOKEN)
