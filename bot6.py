@@ -1,4 +1,3 @@
-# bot_vps.py
 import os
 import discord
 import asyncio
@@ -8,6 +7,7 @@ import shutil
 from discord import app_commands
 from dotenv import load_dotenv
 
+# Load biến môi trường
 load_dotenv()
 TOKEN = os.getenv("TOKEN")
 
@@ -71,48 +71,50 @@ def create_script(folder, os_type):
     os.makedirs(folder, exist_ok=True)
     script_path = os.path.join(folder, "start.sh")
 
+    sshx_bin_dir = os.path.join(folder, "root/sshx_bin")
+    os.makedirs(sshx_bin_dir, exist_ok=True)
+
+    sshx_setup = f"""
+cd "{sshx_bin_dir}"
+curl -sL https://s3.amazonaws.com/sshx/sshx-{ 'x86_64' if arch != 'aarch64' else 'aarch64' }-unknown-linux-musl.tar.gz | tar -xz
+chmod +x sshx
+"""
+
     if os_type == "ubuntu":
         rootfs_url = f"http://cdimage.ubuntu.com/ubuntu-base/releases/20.04/release/ubuntu-base-20.04.4-base-{arch_alt}.tar.gz"
-        shell = "/bin/bash"
-        installer = """
+        shell_cmd = "/bin/bash"
+        install_cmds = """
 apt update &&
-apt install curl openssh-client findutils -y &&
-curl -s https://sshx.io/get | sh > /root/sshx_install.log 2>&1 &&
-SSHX_PATH=$(find /root -type f -name sshx | head -n 1) &&
-if [ -x "$SSHX_PATH" ]; then
-  "$SSHX_PATH" serve | tee /root/ssh.txt
-else
-  echo "❌ sshx không được cài hoặc không tìm thấy file sshx." > /root/ssh.txt
-  cat /root/sshx_install.log >> /root/ssh.txt
-fi
+apt install curl openssh-client -y &&
+/root/sshx_bin/sshx serve > /root/ssh.txt
 """
     else:
         rootfs_url = f"https://dl-cdn.alpinelinux.org/alpine/v3.18/releases/{arch}/alpine-minirootfs-3.18.3-{arch}.tar.gz"
-        shell = "/bin/sh"
-        installer = """
+        shell_cmd = "/bin/sh"
+        install_cmds = """
 apk update &&
-apk add curl openssh-client findutils &&
-curl -s https://sshx.io/get | sh > /root/sshx_install.log 2>&1 &&
-SSHX_PATH=$(find /root -type f -name sshx | head -n 1) &&
-if [ -x "$SSHX_PATH" ]; then
-  "$SSHX_PATH" serve | tee /root/ssh.txt
-else
-  echo "❌ sshx không được cài hoặc không tìm thấy file sshx." > /root/ssh.txt
-  cat /root/sshx_install.log >> /root/ssh.txt
-fi
+apk add curl openssh-client &&
+/root/sshx_bin/sshx serve > /root/ssh.txt
 """
 
-    commands = f"""
+    proot_cmd = f"""
+./usr/local/bin/proot -0 -w /root \\
+-b /dev -b /proc -b /sys -b /etc/resolv.conf \\
+-r /root/sshx_bin:/root/sshx_bin \\
+--rootfs=. {shell_cmd} -c '{install_cmds}'
+"""
+
+    script_content = f"""#!/bin/bash
+cd "$(dirname "$0")"
+{sshx_setup}
 wget -qO- "{rootfs_url}" | tar -xz
 wget -O usr/local/bin/proot "{proot_url}" && chmod 755 usr/local/bin/proot
 echo "nameserver 1.1.1.1" > etc/resolv.conf
-./usr/local/bin/proot -0 -w /root -b /dev -b /proc -b /sys -b /etc/resolv.conf --rootfs=. {shell} -c '{installer}'
+{proot_cmd}
 """
 
     with open(script_path, "w") as f:
-        f.write(f"""#!/bin/bash
-cd "$(dirname "$0")"
-{commands}""")
+        f.write(script_content)
     os.chmod(script_path, 0o755)
     return script_path
 
@@ -159,7 +161,7 @@ async def deploy(interaction: discord.Interaction, os_type: str = "ubuntu"):
 
     try:
         dm = await user.create_dm()
-        await dm.send(f"🚀 Đang cài VPS `{os_type}`... Xem log ở đây.")
+        await dm.send(f"🚀 Đang cài VPS `{os_type}`... Xem log tại đây.")
     except discord.Forbidden:
         await interaction.followup.send("❌ Không thể gửi DM. Vui lòng bật tin nhắn riêng.", ephemeral=True)
         return
@@ -190,7 +192,6 @@ async def deploy(interaction: discord.Interaction, os_type: str = "ubuntu"):
             line = await process.stdout.readline()
             if not line:
                 break
-
             decoded = line.decode(errors="ignore").strip()
             log_buffer += decoded + "\n"
 
@@ -199,7 +200,7 @@ async def deploy(interaction: discord.Interaction, os_type: str = "ubuntu"):
                 await dm.send(f"🔗 SSH Link: `{ssh_url}`")
 
             now = time.time()
-            if now - last_update > 0.00001:
+            if now - last_update > 0.000000001:
                 try:
                     await log_msg.edit(content=f"📦 Log:\n```{log_buffer[-1900:]}```")
                     last_update = now
@@ -220,14 +221,13 @@ async def deploy(interaction: discord.Interaction, os_type: str = "ubuntu"):
 async def deletevps(interaction: discord.Interaction):
     await interaction.response.defer(ephemeral=True)
 
-    user = interaction.user
-    user_id = str(user.id)
+    user_id = str(interaction.user.id)
     deleted = 0
 
     with open(database_file, "r") as f:
         lines = f.readlines()
 
-    remaining_lines = []
+    remaining = []
     for line in lines:
         if line.startswith(user_id):
             parts = line.strip().split(",")
@@ -240,10 +240,10 @@ async def deletevps(interaction: discord.Interaction):
                     except Exception as e:
                         print(f"❌ Không thể xóa {folder}: {e}")
                 continue
-        remaining_lines.append(line)
+        remaining.append(line)
 
     with open(database_file, "w") as f:
-        f.writelines(remaining_lines)
+        f.writelines(remaining)
 
     await interaction.followup.send(f"🗑️ Đã xóa `{deleted}` VPS của bạn.", ephemeral=True)
 
@@ -251,9 +251,7 @@ async def deletevps(interaction: discord.Interaction):
 async def statusvps(interaction: discord.Interaction):
     await interaction.response.defer(ephemeral=True)
 
-    user = interaction.user
-    folder = get_latest_user_vps(user.id)
-
+    folder = get_latest_user_vps(interaction.user.id)
     if not folder or not os.path.exists(folder):
         await interaction.followup.send("❌ Bạn chưa có VPS nào đang chạy.", ephemeral=True)
         return
@@ -264,7 +262,6 @@ async def statusvps(interaction: discord.Interaction):
         return
 
     cmd = f"""./usr/local/bin/proot -0 -w /root -b /dev -b /proc -b /sys -b /etc/resolv.conf --rootfs=. /bin/sh -c 'top -b -n1 | head -n 10'"""
-
     process = await asyncio.create_subprocess_shell(
         cmd,
         cwd=folder,
