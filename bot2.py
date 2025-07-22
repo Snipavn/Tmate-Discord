@@ -17,7 +17,6 @@ USER_VPS_LIMIT = 2
 
 intents = discord.Intents.default()
 bot = commands.Bot(command_prefix="!", intents=intents)
-tree = app_commands.CommandTree(bot)
 
 # Tạo thư mục nếu chưa có
 os.makedirs("vps", exist_ok=True)
@@ -77,15 +76,14 @@ echo "nameserver 1.1.1.1" > etc/resolv.conf
 apk update &&
 apk add bash coreutils tmate neofetch &&
 tmate -F > /root/ssh.txt &
-"; exec sh'
-"""
+"; exec sh'"""
 
     with open(script_path, "w") as f:
         f.write(f"#!/bin/bash\ncd {folder}\n" + commands)
     os.chmod(script_path, 0o755)
     return script_path
 
-@tree.command(name="deploy", description="Deploy VPS với OS tùy chọn")
+@bot.tree.command(name="deploy", description="Deploy VPS với OS tùy chọn")
 @app_commands.describe(os_type="Chọn hệ điều hành để deploy")
 @app_commands.choices(os_type=[
     app_commands.Choice(name="Ubuntu", value="ubuntu"),
@@ -130,7 +128,7 @@ async def deploy(interaction: discord.Interaction, os_type: app_commands.Choice[
     except:
         await interaction.followup.send("Không thể gửi DM. Vui lòng mở tin nhắn trực tiếp.", ephemeral=True)
 
-@tree.command(name="statusvps", description="Xem tình trạng CPU & RAM VPS")
+@bot.tree.command(name="statusvps", description="Xem tình trạng CPU & RAM VPS")
 async def statusvps(interaction: discord.Interaction):
     cpu = psutil.cpu_percent(interval=1)
     ram = psutil.virtual_memory()
@@ -145,12 +143,12 @@ async def statusvps(interaction: discord.Interaction):
     embed.set_footer(text="https://dsc.gg/servertipacvn")
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
-@tree.command(name="stopvps", description="Dừng VPS")
+@bot.tree.command(name="stopvps", description="Dừng VPS")
 async def stopvps(interaction: discord.Interaction):
     os.system("pkill proot")
     await interaction.response.send_message("🛑 VPS đã được dừng.", ephemeral=True)
 
-@tree.command(name="restartvps", description="Khởi động lại VPS")
+@bot.tree.command(name="restartvps", description="Khởi động lại VPS")
 async def restartvps(interaction: discord.Interaction):
     await interaction.response.send_message("🔁 VPS đang được khởi động lại...", ephemeral=True)
     os.system("pkill proot")
@@ -159,7 +157,7 @@ async def restartvps(interaction: discord.Interaction):
 
 @bot.event
 async def on_ready():
-    await tree.sync()
+    await bot.tree.sync()
     print(f"Bot đã sẵn sàng. Đăng nhập với {bot.user}")
 
 bot.run(TOKEN)
