@@ -25,17 +25,14 @@ database_file = "database.txt"
 if not os.path.exists(database_file):
     open(database_file, "w").close()
 
-# Đếm số VPS của 1 người dùng
 def count_user_vps(user_id):
     with open(database_file, "r") as f:
         return sum(1 for line in f if line.startswith(str(user_id)))
 
-# Ghi thông tin VPS vào database
 def register_user_vps(user_id, folder):
     with open(database_file, "a") as f:
         f.write(f"{user_id},{folder}\n")
 
-# Chờ file ssh.txt được tạo từ tmate
 async def wait_for_ssh(folder):
     ssh_path = os.path.join(folder, "root", "ssh.txt")
     for _ in range(60):
@@ -47,7 +44,6 @@ async def wait_for_ssh(folder):
         await asyncio.sleep(1)
     return None
 
-# Tạo script khởi chạy VPS
 def create_script(folder, os_type):
     arch = os.uname().machine
     arch_alt = "arm64" if arch == "aarch64" else "amd64"
@@ -63,8 +59,9 @@ wget -O usr/local/bin/proot "{proot_url}" && chmod 755 usr/local/bin/proot
 echo "nameserver 1.1.1.1" > etc/resolv.conf
 ./usr/local/bin/proot -0 -w /root -b /dev -b /proc -b /sys -b /etc/resolv.conf --rootfs=. /bin/bash -c 'su -c "
 apt update &&
-apt install sudo neofetch systemctl tmate -y &&
-tmate -F > /root/ssh.txt &
+apt install sudo neofetch curl openssh-client -y &&
+curl -s https://sshx.io/get | sh &&
+~/.sshx/bin/sshx serve > /root/ssh.txt &
 "; exec bash'
 """
     else:
@@ -75,12 +72,12 @@ wget -O usr/local/bin/proot "{proot_url}" && chmod 755 usr/local/bin/proot
 echo "nameserver 1.1.1.1" > etc/resolv.conf
 ./usr/local/bin/proot -0 -w /root -b /dev -b /proc -b /sys -b /etc/resolv.conf --rootfs=. /bin/sh -c 'su -c "
 apk update &&
-apk add bash coreutils tmate neofetch &&
-tmate -F > /root/ssh.txt &
+apk add bash coreutils curl openssh-client neofetch &&
+curl -s https://sshx.io/get | sh &&
+~/.sshx/bin/sshx serve > /root/ssh.txt &
 "; exec sh'
 """
 
-    # Viết nội dung script vào start.sh
     with open(script_path, "w") as f:
         f.write(f"""#!/bin/bash
 cd "$(dirname "$0")"
@@ -88,7 +85,6 @@ cd "$(dirname "$0")"
     os.chmod(script_path, 0o755)
     return script_path
 
-# Lệnh deploy VPS
 @bot.tree.command(name="deploy", description="Deploy VPS với OS tùy chọn")
 @app_commands.describe(os_type="Chọn hệ điều hành để deploy")
 @app_commands.choices(os_type=[
@@ -123,7 +119,7 @@ async def deploy(interaction: discord.Interaction, os_type: app_commands.Choice[
     else:
         embed = discord.Embed(
             title="❌ Lỗi khi tạo VPS",
-            description="Không thể lấy SSH tmate. Vui lòng thử lại.",
+            description="Không thể lấy SSH sshx.io. Vui lòng thử lại.",
             color=0xe74c3c
         )
     embed.set_footer(text="https://dsc.gg/servertipacvn")
@@ -134,7 +130,6 @@ async def deploy(interaction: discord.Interaction, os_type: app_commands.Choice[
     except:
         await interaction.followup.send("Không thể gửi DM. Vui lòng bật tin nhắn trực tiếp!", ephemeral=True)
 
-# Lệnh kiểm tra trạng thái CPU / RAM
 @bot.tree.command(name="statusvps", description="Xem tình trạng CPU & RAM VPS")
 async def statusvps(interaction: discord.Interaction):
     cpu = psutil.cpu_percent(interval=1)
@@ -150,13 +145,11 @@ async def statusvps(interaction: discord.Interaction):
     embed.set_footer(text="https://dsc.gg/servertipacvn")
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
-# Lệnh dừng VPS
 @bot.tree.command(name="stopvps", description="Dừng VPS")
 async def stopvps(interaction: discord.Interaction):
     os.system("pkill proot")
     await interaction.response.send_message("🛑 VPS đã được dừng.", ephemeral=True)
 
-# Lệnh khởi động lại VPS
 @bot.tree.command(name="restartvps", description="Khởi động lại VPS")
 async def restartvps(interaction: discord.Interaction):
     await interaction.response.send_message("🔁 VPS đang được khởi động lại...", ephemeral=True)
@@ -164,11 +157,9 @@ async def restartvps(interaction: discord.Interaction):
     await asyncio.sleep(3)
     await interaction.followup.send("✅ VPS đã khởi động lại thành công.", ephemeral=True)
 
-# Khi bot khởi động
 @bot.event
 async def on_ready():
     await bot.tree.sync()
     print(f"✅ Bot đã sẵn sàng. Đăng nhập với {bot.user}")
 
-# Chạy bot
 bot.run(TOKEN)
