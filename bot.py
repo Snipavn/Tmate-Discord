@@ -165,7 +165,7 @@ async def statusvps(interaction: discord.Interaction):
     for name in ["start", "stop", "restart"]:
         view.add_item(discord.ui.Button(label=f"{name.capitalize()} VPS", style=discord.ButtonStyle.primary, custom_id=name))
 
-    await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+    await interaction.response.send_message(embed=embed, view=view, ephemeral=False)
 
 @bot.event
 async def on_interaction(interaction: discord.Interaction):
