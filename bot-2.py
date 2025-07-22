@@ -8,30 +8,34 @@ import uuid
 import psutil
 from dotenv import load_dotenv
 
+# Load biến môi trường từ file .env
 load_dotenv()
 TOKEN = os.getenv("TOKEN")
 
-OWNER_ID = 882844895902040104
-ALLOWED_CHANNEL_ID = 1378918272812060742
-USER_VPS_LIMIT = 2
+OWNER_ID = 882844895902040104  # ID của chủ bot
+ALLOWED_CHANNEL_ID = 1378918272812060742  # Kênh được phép dùng lệnh
+USER_VPS_LIMIT = 2  # Giới hạn VPS mỗi người
 
 intents = discord.Intents.default()
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# Tạo thư mục nếu chưa có
+# Tạo thư mục và file database nếu chưa tồn tại
 os.makedirs("vps", exist_ok=True)
 database_file = "database.txt"
 if not os.path.exists(database_file):
     open(database_file, "w").close()
 
+# Đếm số VPS của 1 người dùng
 def count_user_vps(user_id):
     with open(database_file, "r") as f:
         return sum(1 for line in f if line.startswith(str(user_id)))
 
+# Ghi thông tin VPS vào database
 def register_user_vps(user_id, folder):
     with open(database_file, "a") as f:
         f.write(f"{user_id},{folder}\n")
 
+# Chờ file ssh.txt được tạo từ tmate
 async def wait_for_ssh(folder):
     ssh_path = os.path.join(folder, "root", "ssh.txt")
     for _ in range(60):
@@ -43,6 +47,7 @@ async def wait_for_ssh(folder):
         await asyncio.sleep(1)
     return None
 
+# Tạo script khởi chạy VPS
 def create_script(folder, os_type):
     arch = os.uname().machine
     arch_alt = "arm64" if arch == "aarch64" else "amd64"
@@ -72,13 +77,18 @@ echo "nameserver 1.1.1.1" > etc/resolv.conf
 apk update &&
 apk add bash coreutils tmate neofetch &&
 tmate -F > /root/ssh.txt &
-"; exec sh'"""
+"; exec sh'
+"""
 
+    # Viết nội dung script vào start.sh
     with open(script_path, "w") as f:
-        f.write(f"#!/bin/bash\ncd {folder}\n{commands}")
+        f.write(f"""#!/bin/bash
+cd "$(dirname "$0")"
+{commands}""")
     os.chmod(script_path, 0o755)
     return script_path
 
+# Lệnh deploy VPS
 @bot.tree.command(name="deploy", description="Deploy VPS với OS tùy chọn")
 @app_commands.describe(os_type="Chọn hệ điều hành để deploy")
 @app_commands.choices(os_type=[
@@ -87,20 +97,19 @@ tmate -F > /root/ssh.txt &
 ])
 async def deploy(interaction: discord.Interaction, os_type: app_commands.Choice[str]):
     if interaction.channel.id != ALLOWED_CHANNEL_ID:
-        await interaction.response.send_message("Bạn không thể dùng lệnh này ở đây.", ephemeral=True)
+        await interaction.response.send_message("❌ Bạn không thể dùng lệnh này ở đây.", ephemeral=True)
         return
 
-    if count_user_vps(interaction.user.id) >= USER_VPS_LIMIT:
-        await interaction.response.send_message("Bạn đã đạt giới hạn VPS hôm nay.", ephemeral=True)
+    if interaction.user.id != OWNER_ID and count_user_vps(interaction.user.id) >= USER_VPS_LIMIT:
+        await interaction.response.send_message("🚫 Bạn đã đạt giới hạn VPS hôm nay.", ephemeral=True)
         return
 
-    await interaction.response.send_message(f"Đang khởi tạo VPS {os_type.name}...", ephemeral=True)
+    await interaction.response.send_message(f"🔧 Đang khởi tạo VPS {os_type.name}...", ephemeral=False)
 
     folder = f"vps/{interaction.user.id}_{uuid.uuid4().hex[:6]}"
     script_path = create_script(folder, os_type.value)
     register_user_vps(interaction.user.id, folder)
 
-    # ✅ FIX: Dùng ./start.sh thay vì đường dẫn tuyệt đối
     proc = await asyncio.create_subprocess_shell("./start.sh", cwd=folder)
     await asyncio.sleep(30)
 
@@ -121,10 +130,11 @@ async def deploy(interaction: discord.Interaction, os_type: app_commands.Choice[
 
     try:
         await interaction.user.send(embed=embed)
-        await interaction.followup.send("SSH VPS đã được gửi vào DM của bạn ✅", ephemeral=True)
+        await interaction.followup.send("📬 SSH VPS đã được gửi vào DM của bạn!", ephemeral=True)
     except:
-        await interaction.followup.send("Không thể gửi DM. Vui lòng mở tin nhắn trực tiếp.", ephemeral=True)
+        await interaction.followup.send("Không thể gửi DM. Vui lòng bật tin nhắn trực tiếp!", ephemeral=True)
 
+# Lệnh kiểm tra trạng thái CPU / RAM
 @bot.tree.command(name="statusvps", description="Xem tình trạng CPU & RAM VPS")
 async def statusvps(interaction: discord.Interaction):
     cpu = psutil.cpu_percent(interval=1)
@@ -140,11 +150,13 @@ async def statusvps(interaction: discord.Interaction):
     embed.set_footer(text="https://dsc.gg/servertipacvn")
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
+# Lệnh dừng VPS
 @bot.tree.command(name="stopvps", description="Dừng VPS")
 async def stopvps(interaction: discord.Interaction):
     os.system("pkill proot")
     await interaction.response.send_message("🛑 VPS đã được dừng.", ephemeral=True)
 
+# Lệnh khởi động lại VPS
 @bot.tree.command(name="restartvps", description="Khởi động lại VPS")
 async def restartvps(interaction: discord.Interaction):
     await interaction.response.send_message("🔁 VPS đang được khởi động lại...", ephemeral=True)
@@ -152,9 +164,11 @@ async def restartvps(interaction: discord.Interaction):
     await asyncio.sleep(3)
     await interaction.followup.send("✅ VPS đã khởi động lại thành công.", ephemeral=True)
 
+# Khi bot khởi động
 @bot.event
 async def on_ready():
     await bot.tree.sync()
-    print(f"Bot đã sẵn sàng. Đăng nhập với {bot.user}")
+    print(f"✅ Bot đã sẵn sàng. Đăng nhập với {bot.user}")
 
+# Chạy bot
 bot.run(TOKEN)
