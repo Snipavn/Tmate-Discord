@@ -77,7 +77,7 @@ async def install_rootfs(user_id: int, os_choice: str):
     return user_dir
 
 async def run_proot(user_dir: str, user: discord.User, os_choice: str):
-    # Tạo script tương ứng với OS
+    # Nội dung script tùy theo OS
     script_content = {
         "alpine": """#!/bin/sh
 apk update
@@ -106,13 +106,16 @@ tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}' > /root/ssh.txt
     script_path_host = os.path.join(user_dir, script_name)
     script_path_inside = f"/root/{script_name}"
 
+    # Ghi script ra host
     with open(script_path_host, "w") as f:
         f.write(script_content)
     os.chmod(script_path_host, 0o755)
 
+    # Tạo lệnh proot và bind script vào bên trong rootfs
     proot_cmd = f"""{user_dir}/usr/local/bin/proot \\
 --rootfs={user_dir} -0 -w /root \\
 -b /dev -b /sys -b /proc -b /etc/resolv.conf \\
+-b {script_path_host}:{script_path_inside} \\
 --kill-on-exit /bin/sh {script_path_inside}
 """
 
