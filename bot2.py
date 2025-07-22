@@ -32,10 +32,6 @@ def register_user_vps(user_id, folder):
     with open(database_file, "a") as f:
         f.write(f"{user_id},{folder}\n")
 
-async def run_script(script_path, folder):
-    proc = await asyncio.create_subprocess_exec("bash", script_path, cwd=folder)
-    await proc.wait()
-
 async def wait_for_ssh(folder):
     ssh_path = os.path.join(folder, "root", "ssh.txt")
     for _ in range(60):
@@ -79,7 +75,7 @@ tmate -F > /root/ssh.txt &
 "; exec sh'"""
 
     with open(script_path, "w") as f:
-        f.write(f"#!/bin/bash\ncd {folder}\n" + commands)
+        f.write(f"#!/bin/bash\ncd {folder}\n{commands}")
     os.chmod(script_path, 0o755)
     return script_path
 
@@ -104,10 +100,11 @@ async def deploy(interaction: discord.Interaction, os_type: app_commands.Choice[
     script_path = create_script(folder, os_type.value)
     register_user_vps(interaction.user.id, folder)
 
-    proc = await asyncio.create_subprocess_shell(f"bash {script_path}", cwd=folder)
+    # ✅ FIX: Dùng ./start.sh thay vì đường dẫn tuyệt đối
+    proc = await asyncio.create_subprocess_shell("./start.sh", cwd=folder)
     await asyncio.sleep(30)
 
-    ssh = await wait_for_ssh(os.path.join(folder))
+    ssh = await wait_for_ssh(folder)
     if ssh:
         embed = discord.Embed(
             title="✅ VPS của bạn đã sẵn sàng!",
