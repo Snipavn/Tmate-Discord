@@ -2,6 +2,7 @@ import os
 import discord
 import asyncio
 import uuid
+import time
 from discord import app_commands
 from dotenv import load_dotenv
 
@@ -92,13 +93,14 @@ async def wait_for_ssh(folder):
 @bot.tree.command(name="deploy", description="Khởi tạo VPS dùng sshx.io")
 @app_commands.describe(os_type="Hệ điều hành muốn dùng: ubuntu hoặc alpine")
 async def deploy(interaction: discord.Interaction, os_type: str = "ubuntu"):
-    await interaction.response.defer(thinking=True)
+    await interaction.response.defer(ephemeral=True)
 
     if interaction.channel.id != ALLOWED_CHANNEL_ID:
         await interaction.followup.send("❌ Bạn không thể dùng lệnh này ở đây.", ephemeral=True)
         return
 
-    user_id = interaction.user.id
+    user = interaction.user
+    user_id = user.id
 
     if user_id != OWNER_ID and count_user_vps(user_id) >= USER_VPS_LIMIT:
         await interaction.followup.send("🚫 Bạn đã đạt giới hạn VPS hôm nay.", ephemeral=True)
@@ -113,12 +115,18 @@ async def deploy(interaction: discord.Interaction, os_type: str = "ubuntu"):
         await interaction.followup.send("❌ OS không hợp lệ. Dùng `ubuntu` hoặc `alpine`.", ephemeral=True)
         return
 
+    try:
+        dm = await user.create_dm()
+        await dm.send(f"🚀 Đang cài VPS `{os_type}` của m... Xem log ở DM.")
+    except discord.Forbidden:
+        await interaction.followup.send("❌ Không thể gửi DM. Vui lòng bật tin nhắn riêng.", ephemeral=True)
+        return
+
     folder = f"vps/{user_id}_{uuid.uuid4().hex[:6]}"
     user_states[user_id] = True
     register_user_vps(user_id, folder)
 
-    await interaction.followup.send(f"🚀 Đang cài VPS `{os_type}`...", ephemeral=True)
-    log_message = await interaction.followup.send("📦 Đang xử lý VPS...", ephemeral=True)
+    log_msg = await dm.send("📦 Đang xử lý VPS...")
 
     create_script(folder, os_type)
     process = await asyncio.create_subprocess_shell(
@@ -132,30 +140,39 @@ async def deploy(interaction: discord.Interaction, os_type: str = "ubuntu"):
     ssh_url = ""
 
     async def stream_output():
-        nonlocal log_buffer, ssh_url, log_message
+        nonlocal log_buffer, ssh_url
+        last_update = 0
+
         while True:
             line = await process.stdout.readline()
             if not line:
                 break
+
             decoded = line.decode(errors="ignore").strip()
             log_buffer += decoded + "\n"
 
             if "sshx.io" in decoded and not ssh_url:
                 ssh_url = decoded
-                await interaction.followup.send(f"🔗 SSH Link: `{ssh_url}`", ephemeral=True)
+                await dm.send(f"🔗 SSH Link: `{ssh_url}`")
 
-            # Cập nhật log mỗi 3s
-            await log_message.edit(content=f"📦 Log:\n```{log_buffer[-1900:]}```")
-            await asyncio.sleep(3)
+            now = time.time()
+            if now - last_update > 0.5:
+                try:
+                    await log_msg.edit(content=f"📦 Log:\n```{log_buffer[-1900:]}```")
+                    last_update = now
+                except discord.HTTPException:
+                    pass
 
     await asyncio.gather(stream_output(), process.wait())
 
     if not ssh_url:
         ssh_url = await wait_for_ssh(folder)
-        await interaction.followup.send(f"🔗 SSH Link: `{ssh_url}`", ephemeral=True)
+        await dm.send(f"🔗 SSH Link: `{ssh_url}`")
 
-    await interaction.followup.send("✅ VPS đã sẵn sàng!", ephemeral=True)
+    await dm.send("✅ VPS đã sẵn sàng!")
     user_states.pop(user_id, None)
+
+    await interaction.followup.send("✅ VPS đã được tạo! Kiểm tra DM của bạn.", ephemeral=True)
 
 @bot.event
 async def on_ready():
