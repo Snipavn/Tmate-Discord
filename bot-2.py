@@ -78,7 +78,7 @@ apk update &&
 apk add bash coreutils tmate neofetch &&
 tmate -F > /root/ssh.txt &
 "; exec sh'
-""""""
+"""
 
     with open(script_path, "w") as f:
         f.write(f"#!/bin/bash\ncd {folder}\n" + commands)
