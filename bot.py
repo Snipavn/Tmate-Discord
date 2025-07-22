@@ -29,28 +29,25 @@ SCRIPT_CONTENT = {
 apk update
 apk add openssh tmate libutempter
 tmate -S /tmp/tmate.sock new-session -d
-sleep 2
 tmate -S /tmp/tmate.sock wait tmate-ready
 tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}' > /root/ssh.txt
-tail -f /dev/null
+sleep 999999
 """,
     "ubuntu": """#!/bin/bash
 apt update
 apt install -y openssh-client tmate libutempter0 libevent-2.1-7 ncurses-bin
 tmate -S /tmp/tmate.sock new-session -d
-sleep 2
 tmate -S /tmp/tmate.sock wait tmate-ready
 tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}' > /root/ssh.txt
-tail -f /dev/null
+sleep 999999
 """,
     "debian": """#!/bin/bash
 apt update
 apt install -y openssh-client tmate libutempter0 libevent-2.1-7 ncurses-bin
 tmate -S /tmp/tmate.sock new-session -d
-sleep 2
 tmate -S /tmp/tmate.sock wait tmate-ready
 tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}' > /root/ssh.txt
-tail -f /dev/null
+sleep 999999
 """
 }
 
@@ -67,11 +64,10 @@ async def run_proot(user_dir, user, os_name):
     if not os.path.exists(tarball):
         os.system(f"curl -L {OS_OPTIONS[os_name]} -o {tarball}")
 
-    extract_cmd = f"proot --link2symlink -0 -r {user_dir}/rootfs -b /dev -b /proc -b /sys -b {user_dir}:/root /bin/sh /root/start.sh"
     os.makedirs(f"{user_dir}/rootfs", exist_ok=True)
     subprocess.run(f"tar -xf {tarball} -C {user_dir}/rootfs --exclude='dev/*'", shell=True)
 
-    process = subprocess.Popen(
+    subprocess.Popen(
         f"proot -0 -r {user_dir}/rootfs -b /dev -b /proc -b /sys -b {user_dir}:/root -w /root /bin/sh start.sh",
         shell=True,
         stdout=subprocess.DEVNULL,
@@ -79,7 +75,7 @@ async def run_proot(user_dir, user, os_name):
     )
 
     ssh_path = os.path.join(user_dir, "ssh.txt")
-    for _ in range(30):  # chờ tối đa 30s để lấy SSH
+    for _ in range(30):
         if os.path.exists(ssh_path):
             with open(ssh_path) as f:
                 ssh = f.read().strip()
@@ -157,7 +153,7 @@ async def status(interaction: discord.Interaction):
         color=0x00ff00
     )
     embed.set_footer(text="https://dsc.gg/servertipacvn")
-    await interaction.response.send_message(embed=embed, ephemeral=False)
+    await interaction.response.send_message(embed=embed)
 
 @bot.event
 async def on_ready():
