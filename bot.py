@@ -6,11 +6,12 @@ import subprocess
 import asyncio
 import uuid
 import shutil
-from datetime import datetime
 from dotenv import load_dotenv
+import psutil
 
 load_dotenv()
 TOKEN = os.getenv("TOKEN")
+
 OWNER_ID = 882844895902040104
 ALLOWED_CHANNEL_ID = 1378918272812060742
 
@@ -18,143 +19,141 @@ intents = discord.Intents.default()
 bot = commands.Bot(command_prefix="!", intents=intents)
 tree = app_commands.CommandTree(bot)
 
-@tree.command(name="deploy", description="Deploy VPS Ubuntu Base 20.04")
-async def deploy(interaction: discord.Interaction):
-    if interaction.channel.id != ALLOWED_CHANNEL_ID:
-        await interaction.response.send_message("❌ Lệnh chỉ dùng trong kênh được cho phép!", ephemeral=True)
-        return
+@bot.event
+async def on_ready():
+    await tree.sync()
+    print(f'Bot đã đăng nhập với tên: {bot.user}')
 
-    user_id = str(interaction.user.id)
-    ROOTFS_DIR = f"/root/{user_id}"
-    os.makedirs(ROOTFS_DIR, exist_ok=True)
-
-    await interaction.response.send_message("🔧 Đang chuẩn bị VPS...", ephemeral=True)
-
+def get_arch():
     arch = os.uname().machine
-    arch_alt = "arm64" if arch == "aarch64" else "amd64" if arch == "x86_64" else ""
-    if not arch_alt:
-        await interaction.followup.send("❌ Kiến trúc không được hỗ trợ.")
+    if arch == "x86_64":
+        return "amd64", "x86_64"
+    elif arch == "aarch64":
+        return "arm64", "aarch64"
+    else:
+        return None, None
+
+async def install_rootfs(user_id: int, os_choice: str):
+    arch_alt, arch = get_arch()
+    user_dir = f"/root/vps_{user_id}"
+    os.makedirs(user_dir, exist_ok=True)
+    os.chdir(user_dir)
+
+    if os.path.exists(".installed"):
+        return user_dir
+
+    if os_choice == "debian":
+        url = f"https://github.com/termux/proot-distro/releases/download/v3.10.0/debian-{arch}-pd-v3.10.0.tar.xz"
+        subprocess.run(["wget", "-O", "rootfs.tar.xz", url])
+        subprocess.run(["apt", "download", "xz-utils"])
+        deb_file = next((f for f in os.listdir() if f.endswith(".deb")), None)
+        if deb_file:
+            subprocess.run(["dpkg", "-x", deb_file, "/root/.local/"])
+            os.remove(deb_file)
+        subprocess.run(["tar", "-xJf", "rootfs.tar.xz", "-C", user_dir, "--exclude=dev/*"])
+    elif os_choice == "ubuntu":
+        url = f"http://cdimage.ubuntu.com/ubuntu-base/releases/20.04/release/ubuntu-base-20.04.4-base-{arch_alt}.tar.gz"
+        subprocess.run(["wget", "-O", "rootfs.tar.gz", url])
+        subprocess.run(["tar", "-xf", "rootfs.tar.gz", "-C", user_dir, "--exclude=dev/*"])
+    elif os_choice == "alpine":
+        url = f"https://dl-cdn.alpinelinux.org/alpine/v3.18/releases/{arch}/alpine-minirootfs-3.18.3-{arch}.tar.gz"
+        subprocess.run(["wget", "-O", "rootfs.tar.gz", url])
+        subprocess.run(["tar", "-xf", "rootfs.tar.gz", "-C", user_dir, "--exclude=dev/*"])
+    else:
+        raise ValueError("Invalid OS")
+
+    proot_url = f"https://raw.githubusercontent.com/dxomg/vpsfreepterovm/main/proot-{arch}"
+    proot_path = os.path.join(user_dir, "usr/local/bin/proot")
+    os.makedirs(os.path.dirname(proot_path), exist_ok=True)
+
+    while True:
+        subprocess.run(["wget", "-O", proot_path, proot_url])
+        if os.path.exists(proot_path) and os.path.getsize(proot_path) > 0:
+            os.chmod(proot_path, 0o755)
+            break
+        await asyncio.sleep(1)
+
+    os.makedirs(f"{user_dir}/etc", exist_ok=True)
+    with open(f"{user_dir}/etc/resolv.conf", "w") as f:
+        f.write("nameserver 1.1.1.1\nnameserver 1.0.0.1")
+
+    with open(".installed", "w") as f:
+        f.write("ok")
+
+    return user_dir
+
+async def run_proot(user_dir: str, user: discord.User):
+    start_cmd = f"""{user_dir}/usr/local/bin/proot \
+--rootfs={user_dir} -0 -w /root \
+-b /dev -b /sys -b /proc -b /etc/resolv.conf \
+--kill-on-exit /bin/sh -c "apk update && apk add openssh tmate || apt update && apt install -y openssh-client tmate; \
+tmate -S /tmp/tmate.sock new-session -d && \
+tmate -S /tmp/tmate.sock wait tmate-ready && \
+tmate -S /tmp/tmate.sock display -p '#{{tmate_ssh}}' > ssh.txt"
+"""
+    script_file = f"{user_dir}/start_vps.sh"
+    with open(script_file, "w") as f:
+        f.write(start_cmd)
+    os.chmod(script_file, 0o755)
+
+    proc = await asyncio.create_subprocess_shell(f"bash {script_file}", cwd=user_dir)
+    await proc.wait()
+
+    ssh_path = os.path.join(user_dir, "ssh.txt")
+    if os.path.exists(ssh_path):
+        with open(ssh_path) as f:
+            ssh = f.read().strip()
+        await user.send(f"🔑 SSH VPS của bạn:\n```{ssh}```")
+    else:
+        await user.send("❌ Không thể lấy SSH VPS.")
+
+@tree.command(name="deploy", description="Khởi tạo VPS miễn phí")
+@app_commands.describe(os="Chọn hệ điều hành VPS")
+@app_commands.choices(os=[
+    app_commands.Choice(name="Ubuntu", value="ubuntu"),
+    app_commands.Choice(name="Debian", value="debian"),
+    app_commands.Choice(name="Alpine", value="alpine"),
+])
+async def deploy(interaction: discord.Interaction, os: app_commands.Choice[str]):
+    if interaction.channel_id != ALLOWED_CHANNEL_ID:
+        await interaction.response.send_message("❌ Lệnh này không dùng ở đây.", ephemeral=True)
         return
+    await interaction.response.send_message("🚀 Đang khởi tạo VPS...")
+    user_id = interaction.user.id
+    user_dir = await install_rootfs(user_id, os.value)
+    await run_proot(user_dir, interaction.user)
 
-    if not os.path.exists(f"{ROOTFS_DIR}/.installed"):
-        rootfs_url = f"http://cdimage.ubuntu.com/ubuntu-base/releases/20.04/release/ubuntu-base-20.04.4-base-{arch_alt}.tar.gz"
-        tar_path = "/tmp/rootfs.tar.gz"
-
-        await interaction.followup.send("📥 Đang tải Ubuntu Base...")
-        os.system(f"wget -q --no-hsts -O {tar_path} {rootfs_url}")
-        os.system(f"tar --exclude='dev/*' -xf {tar_path} -C {ROOTFS_DIR}")
-
-        await interaction.followup.send("⚙️ Đang tải proot...")
-        proot_url = f"https://raw.githubusercontent.com/dxomg/vpsfreepterovm/main/proot-{arch}"
-        proot_path = f"{ROOTFS_DIR}/usr/local/bin/proot"
-        os.makedirs(os.path.dirname(proot_path), exist_ok=True)
-
-        while not os.path.exists(proot_path) or os.path.getsize(proot_path) == 0:
-            os.system(f"wget -q --no-hsts -O {proot_path} {proot_url}")
-            await asyncio.sleep(1)
-
-        os.chmod(proot_path, 0o755)
-
-        with open(f"{ROOTFS_DIR}/etc/resolv.conf", "w") as f:
-            f.write("nameserver 1.1.1.1\nnameserver 1.0.0.1")
-
-        os.system(f"echo 'root@servertipacvn' > {ROOTFS_DIR}/etc/hostname")
-        open(f"{ROOTFS_DIR}/.installed", "w").close()
-
-        await interaction.followup.send("📦 Đang cài đặt tmate bên trong VPS...")
-
-        install_script = f"""
-        #!/bin/bash
-        apt update && apt install -y tmate
-        tmate -F > /tmp/tmate.log 2>&1 &
-        """
-        with open(f"{ROOTFS_DIR}/install.sh", "w") as f:
-            f.write(install_script)
-        os.chmod(f"{ROOTFS_DIR}/install.sh", 0o755)
-
-        subprocess.Popen([
-            proot_path,
-            "--rootfs", ROOTFS_DIR,
-            "-0", "-w", "/root",
-            "-b", "/dev", "-b", "/proc", "-b", "/sys", "-b", "/etc/resolv.conf", "--kill-on-exit",
-            "/bin/bash", "/install.sh"
-        ])
-
-        await asyncio.sleep(5)
-
-    await interaction.followup.send("✅ VPS đã được khởi tạo!")
-
-    try:
-        with open(f"{ROOTFS_DIR}/tmp/tmate.log", "r") as log:
-            ssh_line = next((line for line in log if "ssh" in line), "Không tìm thấy SSH.")
-    except:
-        ssh_line = "Không tìm thấy SSH."
-
-    await interaction.user.send(f"🔑 SSH của bạn: `{ssh_line}`")
-
-@tree.command(name="statusvps", description="Xem trạng thái CPU & RAM VPS")
+@tree.command(name="statusvps", description="Xem tình trạng VPS")
 async def statusvps(interaction: discord.Interaction):
-    user_id = str(interaction.user.id)
-    ROOTFS_DIR = f"/root/{user_id}"
-    proot_bin = f"{ROOTFS_DIR}/usr/local/bin/proot"
+    user_id = interaction.user.id
+    user_dir = f"/root/vps_{user_id}"
+    vps_running = "start_vps.sh" in os.listdir(user_dir)
 
-    def read_cmd(cmd):
-        try:
-            output = subprocess.check_output(cmd, shell=True, stderr=subprocess.DEVNULL).decode().strip()
-            return output
-        except:
-            return "N/A"
-
-    cpu = read_cmd("top -bn1 | grep 'Cpu(s)' | awk '{print 100 - $8}'")
-    ram = read_cmd("free -m | awk '/Mem:/ { print ($3/$2)*100 }'")
-    
-    embed = discord.Embed(title="📊 VPS Status", color=0x00ff00)
-    embed.add_field(name="CPU sử dụng", value=f"{cpu}%", inline=True)
-    embed.add_field(name="RAM sử dụng", value=f"{ram}%", inline=True)
+    embed = discord.Embed(title="📊 Trạng thái VPS", color=0x00ff00)
+    embed.add_field(name="CPU Usage", value=f"{psutil.cpu_percent()}%", inline=True)
+    embed.add_field(name="RAM Usage", value=f"{psutil.virtual_memory().percent}%", inline=True)
     embed.set_footer(text="https://dsc.gg/servertipacvn")
 
     view = discord.ui.View()
-    view.add_item(discord.ui.Button(label="Start VPS", style=discord.ButtonStyle.green, custom_id="startvps"))
-    view.add_item(discord.ui.Button(label="Stop VPS", style=discord.ButtonStyle.danger, custom_id="stopvps"))
-    view.add_item(discord.ui.Button(label="Restart VPS", style=discord.ButtonStyle.primary, custom_id="restartvps"))
+    for name in ["start", "stop", "restart"]:
+        view.add_item(discord.ui.Button(label=f"{name.capitalize()} VPS", style=discord.ButtonStyle.primary, custom_id=name))
 
     await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
 @bot.event
 async def on_interaction(interaction: discord.Interaction):
-    if not interaction.type == discord.InteractionType.component:
-        return
-
-    custom_id = interaction.data["custom_id"]
-    user_id = str(interaction.user.id)
-    ROOTFS_DIR = f"/root/{user_id}"
-    proot_bin = f"{ROOTFS_DIR}/usr/local/bin/proot"
-
-    if custom_id == "startvps":
-        await interaction.response.send_message("🚀 Đang khởi động VPS...", ephemeral=True)
-        subprocess.Popen([
-            proot_bin, "--rootfs", ROOTFS_DIR,
-            "-0", "-w", "/root",
-            "-b", "/dev", "-b", "/proc", "-b", "/sys", "-b", "/etc/resolv.conf", "--kill-on-exit",
-            "/bin/bash"
-        ])
-    elif custom_id == "stopvps":
-        os.system(f"pkill -f 'proot --rootfs={ROOTFS_DIR}'")
-        await interaction.response.send_message("🛑 VPS đã dừng!", ephemeral=True)
-    elif custom_id == "restartvps":
-        os.system(f"pkill -f 'proot --rootfs={ROOTFS_DIR}'")
-        await asyncio.sleep(2)
-        subprocess.Popen([
-            proot_bin, "--rootfs", ROOTFS_DIR,
-            "-0", "-w", "/root",
-            "-b", "/dev", "-b", "/proc", "-b", "/sys", "-b", "/etc/resolv.conf", "--kill-on-exit",
-            "/bin/bash"
-        ])
-        await interaction.response.send_message("🔄 VPS đã khởi động lại!", ephemeral=True)
-
-@bot.event
-async def on_ready():
-    await tree.sync()
-    print(f"Bot đã sẵn sàng với tên: {bot.user}")
+    if interaction.type.name == "component":
+        user_id = interaction.user.id
+        user_dir = f"/root/vps_{user_id}"
+        if interaction.data["custom_id"] == "start":
+            await run_proot(user_dir, interaction.user)
+            await interaction.response.send_message("✅ VPS đã được khởi động lại.", ephemeral=True)
+        elif interaction.data["custom_id"] == "stop":
+            subprocess.run(["pkill", "-f", f"vps_{user_id}"])
+            await interaction.response.send_message("🛑 VPS đã được dừng.", ephemeral=True)
+        elif interaction.data["custom_id"] == "restart":
+            subprocess.run(["pkill", "-f", f"vps_{user_id}"])
+            await run_proot(user_dir, interaction.user)
+            await interaction.response.send_message("🔁 VPS đã khởi động lại.", ephemeral=True)
 
 bot.run(TOKEN)
