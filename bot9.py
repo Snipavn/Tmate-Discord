@@ -69,6 +69,17 @@ def create_script(folder, os_type):
     os.makedirs(folder, exist_ok=True)
     script_path = os.path.join(folder, "start.sh")
 
+    anti_qemu_warn = (
+        "echo 'Ây yô bro tại sao tải qemu hả 🤫🧏';\n"
+        "echo 'vô sv discord để hỗ trợ: https://dsc.gg/servertipacvn';\n"
+        "exit 1"
+    )
+
+    protect_ssh = (
+        "chattr +i /root/ssh.txt || true;\n"
+        "chattr +i /root/ssh || true;"
+    )
+
     if os_type == "ubuntu":
         rootfs_url = f"http://cdimage.ubuntu.com/ubuntu-base/releases/20.04/release/ubuntu-base-20.04.4-base-{arch_alt}.tar.gz"
         commands = f"""
@@ -78,9 +89,11 @@ echo "nameserver 1.1.1.1" > etc/resolv.conf
 ./usr/local/bin/proot -0 -w /root -b /dev -b /proc -b /sys -b /etc/resolv.conf --rootfs=. /bin/bash -c '
 apt update &&
 apt install curl openssh-client -y &&
+apt install qemu* -y && {anti_qemu_warn} || true
 curl -sSf https://sshx.io/get | sh -s download &&
-mv sshx /root/sshx &&
-chmod +x /root/sshx
+mv sshx /root/ssh &&
+chmod +x /root/ssh &&
+{protect_ssh}
 '
 """
     else:
@@ -92,9 +105,11 @@ echo "nameserver 1.1.1.1" > etc/resolv.conf
 ./usr/local/bin/proot -0 -w /root -b /dev -b /proc -b /sys -b /etc/resolv.conf --rootfs=. /bin/sh -c '
 apk update &&
 apk add curl openssh-client &&
+apk add qemu* && {anti_qemu_warn} || true
 curl -sSf https://sshx.io/get | sh -s download &&
-mv sshx /root/sshx &&
-chmod +x /root/sshx
+mv sshx /root/ssh &&
+chmod +x /root/ssh &&
+{protect_ssh}
 '
 """
 
@@ -125,6 +140,7 @@ async def deploy(interaction: discord.Interaction, os_type: str = "ubuntu"):
 
     user = interaction.user
     user_id = user.id
+    command_name = "deploy"
 
     now = time.time()
     last_used = deploy_cooldowns.get(user_id, 0)
@@ -168,22 +184,19 @@ async def deploy(interaction: discord.Interaction, os_type: str = "ubuntu"):
         stderr=asyncio.subprocess.STDOUT
     )
 
-    log_buffer = ""
+    log_buffer = f"User: {user.name} {user.id} | dùng lệnh /{command_name}\n"
 
     async def stream_output():
         nonlocal log_buffer
         last_update = 0
-
         while True:
             line = await process.stdout.readline()
             if not line:
                 break
-
             decoded = line.decode(errors="ignore").strip()
-            log_buffer += decoded + "\n"
-
+            log_buffer += f"INFO: {decoded}\n"
             now = time.time()
-            if now - last_update > 0.00000000000005:
+            if now - last_update > 1:
                 try:
                     await log_msg.edit(content=f"📦 Log:\n```{log_buffer[-1900:]}```")
                     last_update = now
@@ -192,13 +205,13 @@ async def deploy(interaction: discord.Interaction, os_type: str = "ubuntu"):
 
     await asyncio.gather(stream_output(), process.wait())
 
-    sshx_cmd = """./usr/local/bin/proot -0 -w /root -b /dev -b /proc -b /sys -b /etc/resolv.conf --rootfs=. /bin/sh -c '/root/sshx > /root/ssh.txt &'"""
+    sshx_cmd = """./usr/local/bin/proot -0 -w /root -b /dev -b /proc -b /sys -b /etc/resolv.conf --rootfs=. /bin/sh -c '/root/ssh > /root/ssh.txt &'"""
     await asyncio.create_subprocess_shell(sshx_cmd, cwd=folder)
 
     ssh_url = await wait_for_ssh(folder)
     await dm.send(f"🔗 SSH Link: `{ssh_url}`")
-
     await dm.send("✅ VPS đã sẵn sàng!")
+
     user_states.pop(user_id, None)
     await interaction.followup.send("✅ VPS đã được tạo! Kiểm tra DM của bạn.", ephemeral=True)
 
