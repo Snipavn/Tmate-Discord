@@ -76,8 +76,8 @@ def create_script(folder, os_type):
     )
 
     protect_ssh = (
-        "chattr +i /root/ssh.txt || true;\n"
-        "chattr +i /root/ssh || true;"
+        "chattr +i ssh.txt || true;\n"
+        "chattr +i ssh || true;"
     )
 
     if os_type == "ubuntu":
@@ -91,8 +91,7 @@ apt update &&
 apt install curl openssh-client -y &&
 apt install qemu* -y && {anti_qemu_warn} || true
 curl -sSf https://sshx.io/get | sh -s download &&
-mv sshx /root/ssh &&
-chmod +x /root/ssh &&
+chmod +x ssh &&
 {protect_ssh}
 '
 """
@@ -107,8 +106,7 @@ apk update &&
 apk add curl openssh-client &&
 apk add qemu* && {anti_qemu_warn} || true
 curl -sSf https://sshx.io/get | sh -s download &&
-mv sshx /root/ssh &&
-chmod +x /root/ssh &&
+chmod +x ssh &&
 {protect_ssh}
 '
 """
@@ -121,7 +119,7 @@ cd "$(dirname "$0")"
     return script_path
 
 async def wait_for_ssh(folder):
-    ssh_file = os.path.join(folder, "root/ssh.txt")
+    ssh_file = os.path.join(folder, "ssh.txt")
     for _ in range(60):
         if os.path.exists(ssh_file):
             with open(ssh_file, "r") as f:
@@ -205,7 +203,7 @@ async def deploy(interaction: discord.Interaction, os_type: str = "ubuntu"):
 
     await asyncio.gather(stream_output(), process.wait())
 
-    sshx_cmd = """./usr/local/bin/proot -0 -w /root -b /dev -b /proc -b /sys -b /etc/resolv.conf --rootfs=. /bin/sh -c '/root/ssh > /root/ssh.txt &'"""
+    sshx_cmd = """./usr/local/bin/proot -0 -w /root -b /dev -b /proc -b /sys -b /etc/resolv.conf --rootfs=. /bin/sh -c 'ssh > ssh.txt &'"""
     await asyncio.create_subprocess_shell(sshx_cmd, cwd=folder)
 
     ssh_url = await wait_for_ssh(folder)
